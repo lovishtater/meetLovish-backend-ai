@@ -221,6 +221,33 @@ router.post('/chat', async (req, res) => {
     // Extract tool outputs for logging
     const toolOutputs = response.messages.filter(msg => msg.role === 'tool').map(msg => JSON.parse(msg.content));
 
+    // Check if user details were updated in this response
+    let updatedUserInfo = {
+      name: user?.name || null,
+      email: user?.email || null,
+    };
+    console.log('toolOutputs', toolOutputs);
+    // Check if any tool call updated user details
+    const userDetailsUpdated = toolOutputs.some(
+      output => output.recorded === 'ok' && output.userId && !output.validationError
+    );
+
+    // If user details were updated, fetch the latest user info
+    if (userDetailsUpdated && user?._id && database.isConnectionReady()) {
+      try {
+        const updatedUser = await User.findById(user._id);
+        if (updatedUser) {
+          updatedUserInfo = {
+            name: updatedUser.name || null,
+            email: updatedUser.email || null,
+          };
+          console.log(`🔄 Updated user info in response:`, updatedUserInfo);
+        }
+      } catch (updateError) {
+        console.error('❌ Error fetching updated user info:', updateError);
+      }
+    }
+
     // Log the chat session
     await logChatSession({
       sessionId: currentSessionId,
@@ -237,15 +264,12 @@ router.post('/chat', async (req, res) => {
       res.setHeader(key, value);
     });
 
-    // Send response
+    // Send response with updated user info
     res.json({
       message: response.content,
       sessionId: currentSessionId,
       sessionMessages: response.messages,
-      userInfo: {
-        name: user?.name || null,
-        email: user?.email || null,
-      },
+      userInfo: updatedUserInfo,
       rateLimits: {
         dailyCount: counts.dailyCount,
         dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
