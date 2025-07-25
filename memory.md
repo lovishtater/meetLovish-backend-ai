@@ -1,43 +1,72 @@
-# Lovish Tater - Professional Background
+# Memory
 
-## Summary
-Lovish Tater is a passionate software engineer and technology enthusiast with expertise in full-stack development, AI/ML integration, and modern web technologies. He specializes in building scalable applications and has experience working with various tech stacks including React, Node.js, Python, and cloud platforms.
+Name: Lovish Tater
+Birthplace: Chittorgarh, Rajasthan, India
+Currently based in: Pune, Maharashtra, India
+Languages spoken: Hindi (native), English (professional)
 
-## Skills & Expertise
-- **Frontend Development**: React, Next.js, TypeScript, JavaScript, HTML5, CSS3, Tailwind CSS
-- **Backend Development**: Node.js, Express.js, Python, Django, REST APIs, GraphQL
-- **Database Technologies**: MongoDB, PostgreSQL, MySQL, Redis
-- **Cloud & DevOps**: AWS, Google Cloud Platform, Docker, Kubernetes, CI/CD
-- **AI/ML**: OpenAI API integration, Machine Learning models, Data Analysis
-- **Other Technologies**: Git, WebSockets, Microservices, Serverless Architecture
+Fun Facts:
+	•	Tried starting a YouTube channel to teach Full Stack WebDevelopment: YouTube Video - https://www.youtube.com/watch?v=JUxzS7wxmp8
+	•	Loves attending local tech meetups
+	•	Interested in startups and has worked in four early-stage startups
+	•	Loves traveling and shares travel content on Instagram - https://www.instagram.com/lovishtater
+	•	Used to enjoy competitive programming previously (Hackout 2021 winner, top 200 in Google Hashcode & Code Jam 2022)
+	•	Volunteers and mentors students, especially during college time (GDSC, CodeChef Chapter Leader)
 
-## Professional Experience
-Lovish has worked on various projects ranging from e-commerce platforms to AI-powered applications. He has experience in:
-- Building responsive and interactive web applications
-- Developing RESTful APIs and microservices
-- Integrating AI capabilities into existing systems
-- Optimizing application performance and scalability
-- Collaborating with cross-functional teams
+⸻
 
-## Education & Learning
-Continuously learning and staying updated with the latest technology trends. Active in the developer community and always eager to take on new challenges.
+Professional Summary
 
-## Personal Traits
-- Strong problem-solving skills
-- Excellent communication and collaboration abilities
-- Detail-oriented with a focus on code quality
-- Passionate about clean, maintainable code
-- Always eager to learn new technologies and methodologies
+Lovish Tater is a full-stack engineer with a product-first mindset and proven experience in building and scaling tech for startups. He’s known for taking ownership beyond engineering tasks and aligning his work with business impact. He enjoys working across the full product lifecycle — from 0 to 1, scaling to production, and beyond.
 
-## Contact & Collaboration
-Lovish is open to discussing new opportunities, collaborations, and innovative projects. He enjoys working on challenging problems and is particularly interested in AI/ML integration and full-stack development roles.
+Experience Overview:
+	•	Built networking and event platform for top B-school/finance grads in the US
+	•	Developed AI-powered math learning tools for an edtech startup
+	•	Contributed to an e-commerce platform in India’s polymer industry
+	•	Currently building tech at a food-tech company with operations across multiple countries
 
-## Current Focus
-Currently focusing on:
-- AI-powered web applications
-- Modern JavaScript frameworks
-- Cloud-native development
-- Performance optimization
-- User experience enhancement
+Current Role:
+	•	Software Engineer at Calo
+	•	Works across app, dashboard, and backend for retail cafe operations
+	•	Stack: React Native, React.js, Node.js, AWS (Serverless)
 
-Feel free to reach out to discuss potential collaborations, job opportunities, or just to connect and share ideas about technology and development! 
+⸻
+
+Technical Skills
+
+Frontend: React, Next.js, React Native, JavaScript, TypeScript, HTML, CSS, Tailwind
+Backend: Node.js, Express, REST APIs, Microservices
+Databases: MongoDB, PostgreSQL, MySQL, Redis
+Cloud: AWS (Lambda, S3, API Gateway, etc.), Serverless Architecture
+Others: WebSockets, Git, OpenAI API, CrewAI, Langchain, CI/CD tools
+
+⸻
+
+Education
+	•	Bachelor in Technology in Computer Science from Poornima College of Engineering, Jaipur
+    •	Schooling from Nursery to 12th from Central Academy, Chittorgarh
+	•	Certifications: AWS Cloud Practitioner, Azure AI Fundamentals, Triplebyte Certified
+	•	Self-taught and actively learning modern AI engineering practices
+
+⸻
+
+Volunteering
+	•	Google Developer Student Clubs Poornima – Web Dev Lead, organized events and taught 100+ students
+	•	CodeChef Chapter Leader – hosted contests, mentored juniors in DSA and Competitive Programming
+
+⸻
+
+Communication & Personality
+	•	Strong at problem-solving and system-level thinking
+	•	Believes in clean, maintainable code
+	•	Curious, fast learner, and business-aware engineer
+	•	Sometimes struggles with saying no, articulating retrospectives, and estimations — actively working on these
+
+⸻
+
+Hobbies & Personal Interests
+	•	Traveling and exploring nature
+	•	Shares travel photos on Instagram
+	•	Occasionally participates in hackathons and tech meetups
+    •	Loves playing games like Basketball, Badminton, Chess, Clash of Clans, Counter Strike, IGI, Smashkarts, etc.
+

@@ -77,6 +77,20 @@ ChatSchema.statics.getChatsBySession = function (sessionId) {
   return this.find({ sessionId }).sort({ timestamp: 1 }).lean();
 };
 
+ChatSchema.statics.getConversationHistory = function (userId, sessionId, limit = 10) {
+  // Get recent conversation history for the user, prioritizing current session
+  return this.find({
+    $or: [
+      { sessionId: sessionId }, // Current session messages
+      { userId: userId }, // Recent messages from same user
+    ],
+  })
+    .sort({ timestamp: -1 }) // Most recent first
+    .limit(limit)
+    .sort({ timestamp: 1 }) // Then sort chronologically for conversation flow
+    .lean();
+};
+
 ChatSchema.statics.getChatsByUser = function (userId, days = 7) {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - days);

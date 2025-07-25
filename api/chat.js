@@ -186,8 +186,37 @@ router.post('/chat', async (req, res) => {
       };
     }
 
-    // Get AI response
-    const response = await getAIAssistant().chat(message, [], currentSessionId, userInfo, user?._id, userContext);
+    // Get conversation history for context
+    let conversationHistory = [];
+    if (user?._id && database.isConnectionReady()) {
+      try {
+        const Chat = require('../models/Chat');
+        const historyChats = await Chat.getConversationHistory(user._id, currentSessionId, 10);
+
+        // Convert chat history to OpenAI message format
+        conversationHistory = historyChats
+          .map(chat => [
+            { role: 'user', content: chat.userMessage },
+            { role: 'assistant', content: chat.assistantMessage },
+          ])
+          .flat();
+
+        console.log(`📚 Loaded ${conversationHistory.length} messages from conversation history`);
+      } catch (historyError) {
+        console.error('❌ Error loading conversation history:', historyError);
+        // Continue without history if there's an error
+      }
+    }
+
+    // Get AI response with conversation history
+    const response = await getAIAssistant().chat(
+      message,
+      conversationHistory,
+      currentSessionId,
+      userInfo,
+      user?._id,
+      userContext
+    );
 
     // Extract tool outputs for logging
     const toolOutputs = response.messages.filter(msg => msg.role === 'tool').map(msg => JSON.parse(msg.content));
