@@ -14,7 +14,7 @@
   },
   "keywords": [],
   "author": "",
-  "license": "ISC",
+  "license": "0BSD",
   "description": "",
   "dependencies": {
     "cors": "^2.8.5",
