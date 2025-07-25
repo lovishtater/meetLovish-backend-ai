@@ -1,0 +1,281 @@
+const express = require('express');
+const router = express.Router();
+const AIAssistant = require('../lib/openai');
+const rateLimiter = require('../utils/rateLimiter');
+const { logChatSession } = require('../utils/logger');
+const geoip = require('geoip-lite');
+const useragent = require('useragent');
+const User = require('../models/User');
+const database = require('../models/database');
+
+// Lazy-load AI Assistant to avoid startup issues
+let aiAssistant = null;
+function getAIAssistant() {
+  if (!aiAssistant) {
+    aiAssistant = new AIAssistant();
+  }
+  return aiAssistant;
+}
+
+// Middleware to extract user info
+function getUserInfo(req) {
+  const ip =
+    req.ip ||
+    req.connection.remoteAddress ||
+    req.socket.remoteAddress ||
+    (req.connection.socket ? req.connection.socket.remoteAddress : '127.0.0.1');
+  const userAgent = req.get('User-Agent') || '';
+  const geo = geoip.lookup(ip);
+  const agent = useragent.parse(userAgent);
+
+  return {
+    ip,
+    userAgent,
+    geolocation: geo
+      ? {
+          country: geo.country,
+          region: geo.region,
+          city: geo.city,
+          ll: geo.ll, // latitude, longitude
+          timezone: geo.timezone,
+        }
+      : null,
+    browser: {
+      name: agent.family,
+      version: agent.toVersion(),
+      os: agent.os.toString(),
+    },
+  };
+}
+
+// POST /api/chat/init - Initialize a new chat session
+router.post('/chat/init', async (req, res) => {
+  try {
+    const { token } = req.body;
+    const userInfo = getUserInfo(req);
+
+    // Find or create user by token
+    let user = null;
+    if (database.isConnectionReady()) {
+      try {
+        const userResult = await User.findOrCreateByToken(token, userInfo);
+        user = userResult.user;
+      } catch (dbError) {
+        console.error('Database error during user creation:', dbError);
+      }
+    }
+
+    // Generate new session ID
+    const sessionId = rateLimiter.generateSessionId(userInfo.ip, userInfo.userAgent);
+
+    // Add session to user if database is available
+    if (user && database.isConnectionReady()) {
+      try {
+        await user.addSession(sessionId);
+      } catch (sessionError) {
+        console.error('Error adding session to user:', sessionError);
+      }
+    }
+
+    // Initialize rate limit tracking
+    const rateLimitResult = rateLimiter.checkRateLimit(sessionId, userInfo.ip, token, userInfo);
+
+    // Get rate limit headers
+    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, token, userInfo);
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    // Send response
+    res.json({
+      sessionId,
+      userToken: user?.token || null,
+      userInfo: {
+        geolocation: userInfo.geolocation,
+        browser: userInfo.browser,
+        name: user?.name || null,
+        email: user?.email || null,
+      },
+      rateLimits: {
+        dailyCount: rateLimitResult.dailyCount,
+        dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Chat init endpoint error:', error);
+    res.status(500).json({
+      error: 'Internal server error. Please try again.',
+    });
+  }
+});
+
+// POST /api/chat - Main chat endpoint
+router.post('/chat', async (req, res) => {
+  try {
+    const { message, sessionId, userToken } = req.body;
+
+    // Validate input
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      return res.status(400).json({
+        error: 'Message is required and must be a non-empty string',
+      });
+    }
+
+    if (message.length > 1000) {
+      return res.status(400).json({
+        error: 'Message too long. Maximum 1000 characters allowed.',
+      });
+    }
+
+    // Get user info
+    const userInfo = getUserInfo(req);
+
+    // Validate session ID
+    if (!sessionId) {
+      return res.status(400).json({
+        error: 'Session ID is required',
+      });
+    }
+
+    const currentSessionId = sessionId;
+
+    // Check rate limits
+    const rateLimitResult = rateLimiter.checkRateLimit(currentSessionId, userInfo.ip, userToken, userInfo);
+
+    if (!rateLimitResult.allowed) {
+      const errorMessage = `Daily limit reached. You can send up to ${rateLimiter.MAX_MESSAGES_PER_DAY} messages per day. Please try again tomorrow`;
+
+      return res.status(429).json({
+        error: errorMessage,
+        reason: rateLimitResult.reason,
+        dailyCount: rateLimitResult.dailyCount,
+        resetTime: rateLimitResult.resetTime,
+        exceededBy: rateLimitResult.exceededBy,
+      });
+    }
+
+    // Increment rate limit counters
+    const counts = rateLimiter.incrementCount(currentSessionId, userInfo.ip, userToken, userInfo);
+
+    // Find user by token if provided
+    let user = null;
+    if (userToken && database.isConnectionReady()) {
+      try {
+        user = await User.findByToken(userToken);
+        if (user) {
+          await user.updateSessionActivity(currentSessionId);
+        }
+      } catch (userError) {
+        console.error('Error updating user session:', userError);
+      }
+    }
+
+    // Store session context for tool calls
+    req.sessionId = currentSessionId;
+    req.userInfo = userInfo;
+    req.user = user;
+
+    // Prepare user context for personalization
+    let userContext = null;
+    if (user) {
+      userContext = {
+        name: user.name,
+        email: user.email,
+        notes: user.notes,
+      };
+    }
+
+    // Get AI response
+    const response = await getAIAssistant().chat(message, [], currentSessionId, userInfo, user?._id, userContext);
+
+    // Extract tool outputs for logging
+    const toolOutputs = response.messages.filter(msg => msg.role === 'tool').map(msg => JSON.parse(msg.content));
+
+    // Log the chat session
+    await logChatSession({
+      sessionId: currentSessionId,
+      userId: user?._id,
+      userMessage: message,
+      assistantMessage: response.content,
+      toolOutputs,
+      messageCount: counts.sessionCount,
+    });
+
+    // Set rate limit headers
+    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(currentSessionId, userInfo.ip, userToken, userInfo);
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    // Send response
+    res.json({
+      message: response.content,
+      sessionId: currentSessionId,
+      sessionMessages: response.messages,
+      userInfo: {
+        name: user?.name || null,
+        email: user?.email || null,
+      },
+      rateLimits: {
+        dailyCount: counts.dailyCount,
+        dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+      },
+    });
+  } catch (error) {
+    console.error('Chat endpoint error:', error);
+
+    // Different error responses based on error type
+    if (error.message.includes('OpenAI')) {
+      res.status(503).json({
+        error: 'AI service temporarily unavailable. Please try again in a moment.',
+      });
+    } else {
+      res.status(500).json({
+        error: 'Internal server error. Please try again.',
+      });
+    }
+  }
+});
+
+// GET /api/chat/status - Get session status and rate limits
+router.get('/chat/status', (req, res) => {
+  try {
+    const { sessionId } = req.query;
+    const userInfo = getUserInfo(req);
+
+    if (!sessionId) {
+      return res.json({
+        sessionId: null,
+        rateLimits: {
+          sessionCount: 0,
+          dailyCount: 0,
+          sessionLimit: rateLimiter.MAX_MESSAGES_PER_SESSION,
+          dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+        },
+      });
+    }
+
+    const counts = rateLimiter.getCounts(sessionId, userInfo.ip, null, userInfo);
+    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, null, userInfo);
+
+    // Set rate limit headers
+    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+      res.setHeader(key, value);
+    });
+
+    res.json({
+      sessionId,
+      rateLimits: {
+        dailyCount: counts.dailyCount,
+        dailyLimit: counts.maxDaily,
+        dailyRemaining: Math.max(0, counts.maxDaily - counts.dailyCount),
+      },
+    });
+  } catch (error) {
+    console.error('Chat status endpoint error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+module.exports = router;
