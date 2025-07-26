@@ -82,8 +82,9 @@ router.get('/analytics', requireSecret, async (req, res) => {
   }
 });
 
-// GET /api/admin/users - View recent users (protected)
+// GET /api/admin/users - View comprehensive user data with sessions, chats, and tool calls (protected)
 router.get('/users', requireSecret, async (req, res) => {
+  console.log('Admin users endpoint called');
   try {
     if (!database.isConnectionReady()) {
       return res.status(503).json({ error: 'Database not available' });
@@ -93,22 +94,190 @@ router.get('/users', requireSecret, async (req, res) => {
     const maxLimit = 200;
     const actualLimit = Math.min(limit, maxLimit);
 
-    const users = await User.getRecentUsers(actualLimit);
+    // Aggregation pipeline to get comprehensive user data
+    const usersWithData = await User.aggregate([
+      // Stage 1: Get all users
+      {
+        $lookup: {
+          from: 'chats',
+          localField: '_id',
+          foreignField: 'userId',
+          as: 'chats',
+        },
+      },
+      {
+        $lookup: {
+          from: 'toolcalls',
+          localField: '_id',
+          foreignField: 'userId',
+          as: 'toolCalls',
+        },
+      },
+      // Stage 2: Group chats by session properly
+      {
+        $addFields: {
+          sessions: {
+            $map: {
+              input: {
+                $setUnion: '$chats.sessionId',
+              },
+              as: 'sessionId',
+              in: {
+                sessionId: '$$sessionId',
+                chats: {
+                  $filter: {
+                    input: '$chats',
+                    cond: { $eq: ['$$this.sessionId', '$$sessionId'] },
+                  },
+                },
+                toolCalls: {
+                  $filter: {
+                    input: '$toolCalls',
+                    cond: { $eq: ['$$this.sessionId', '$$sessionId'] },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      // Stage 3: Add session statistics
+      {
+        $addFields: {
+          sessions: {
+            $map: {
+              input: '$sessions',
+              as: 'session',
+              in: {
+                sessionId: '$$session.sessionId',
+                totalChats: { $size: '$$session.chats' },
+                totalToolCalls: { $size: '$$session.toolCalls' },
+                firstChat: { $min: '$$session.chats.timestamp' },
+                lastChat: { $max: '$$session.chats.timestamp' },
+                chats: '$$session.chats',
+                toolCalls: '$$session.toolCalls',
+              },
+            },
+          },
+        },
+      },
+      // Stage 4: Calculate user statistics
+      {
+        $addFields: {
+          totalSessions: { $size: '$sessions' },
+          totalChats: { $size: '$chats' },
+          totalToolCalls: { $size: '$toolCalls' },
+          mostRecentActivity: {
+            $max: ['$lastActivity', { $max: '$chats.timestamp' }, { $max: '$toolCalls.timestamp' }],
+          },
+          // Find the most recent chat across all sessions
+          mostRecentChat: {
+            $reduce: {
+              input: '$chats',
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: {
+                    $or: [{ $eq: ['$$value', null] }, { $gt: ['$$this.timestamp', '$$value.timestamp'] }],
+                  },
+                  then: '$$this',
+                  else: '$$value',
+                },
+              },
+            },
+          },
+        },
+      },
+      // Stage 5: Sort by most recent activity
+      {
+        $sort: { mostRecentActivity: -1 },
+      },
+      // Stage 6: Limit results
+      {
+        $limit: actualLimit,
+      },
+      // Stage 7: Project final structure
+      {
+        $project: {
+          _id: 1,
+          email: 1,
+          name: 1,
+          notes: 1,
+          status: 1,
+          totalMessages: 1,
+          lastActivity: 1,
+          userInfo: 1,
+          sessions: 1,
+          totalSessions: 1,
+          totalChats: 1,
+          totalToolCalls: 1,
+          mostRecentActivity: 1,
+          mostRecentChat: 1,
+          tags: 1,
+        },
+      },
+    ]);
 
-    res.json({
-      users: users.map(user => ({
+    const response = {
+      users: usersWithData.map(user => ({
         id: user._id,
         email: user.email,
         name: user.name,
-        totalInteractions: user.totalInteractions,
-        lastInteraction: user.lastInteraction,
+        notes: user.notes || '',
         status: user.status,
-        geolocation: user.userInfo?.geolocation,
+        totalMessages: user.totalMessages,
+        lastActivity: user.lastActivity,
+        mostRecentActivity: user.mostRecentActivity,
+        userInfo: {
+          geolocation: user.userInfo?.geolocation,
+          browser: user.userInfo?.browser,
+          firstSeenIP: user.userInfo?.firstSeenIP,
+          lastSeenIP: user.userInfo?.lastSeenIP,
+        },
+        sessions: user.sessions.map(session => ({
+          sessionId: session.sessionId,
+          totalChats: session.totalChats,
+          totalToolCalls: session.toolCalls.length,
+          firstChat: session.firstChat,
+          lastChat: session.lastChat,
+          chats: session.chats.map(chat => ({
+            id: chat._id,
+            userMessage: chat.userMessage,
+            assistantMessage: chat.assistantMessage,
+            toolOutputs: chat.toolOutputs,
+            messageCount: chat.messageCount,
+            timestamp: chat.timestamp,
+          })),
+          toolCalls: session.toolCalls.map(tool => ({
+            id: tool._id,
+            type: tool.type,
+            data: tool.data,
+            timestamp: tool.timestamp,
+            result: tool.result,
+          })),
+        })),
+        statistics: {
+          totalSessions: user.totalSessions,
+          totalChats: user.totalChats,
+          totalToolCalls: user.totalToolCalls,
+        },
+        mostRecentChat: user.mostRecentChat
+          ? {
+              id: user.mostRecentChat._id,
+              sessionId: user.mostRecentChat.sessionId,
+              userMessage: user.mostRecentChat.userMessage,
+              assistantMessage: user.mostRecentChat.assistantMessage,
+              timestamp: user.mostRecentChat.timestamp,
+            }
+          : null,
+        tags: user.tags || [],
       })),
-      total: users.length,
+      total: usersWithData.length,
       limit: actualLimit,
       timestamp: new Date().toISOString(),
-    });
+    };
+    console.log(response);
+    res.json(response);
   } catch (error) {
     console.error('Admin users endpoint error:', error);
     res.status(500).json({ error: 'Internal server error' });
