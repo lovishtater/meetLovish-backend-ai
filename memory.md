@@ -17,13 +17,13 @@ Fun Facts:
 
 Professional Summary
 
-Lovish Tater is a full-stack engineer with a product-first mindset and proven experience in building and scaling tech for startups. He’s known for taking ownership beyond engineering tasks and aligning his work with business impact. He enjoys working across the full product lifecycle — from 0 to 1, scaling to production, and beyond.
+Lovish Tater is a full-stack engineer with a product-first mindset and proven experience in building and scaling tech for startups. I am known for taking ownership beyond engineering tasks and aligning his work with business impact. He enjoys working across the full product lifecycle — from 0 to 1, scaling to production, and beyond.
 
 Experience Overview:
-	•	Built networking and event platform for top B-school/finance grads in the US
-	•	Developed AI-powered math learning tools for an edtech startup
-	•	Contributed to an e-commerce platform in India’s polymer industry
-	•	Currently building tech at a food-tech company with operations across multiple countries
+	•	Currently building tech at a food-tech company with operations across multiple countries (Calo)
+	•	Contributed in building an e-commerce platform in India’s polymer industry (Source.one)
+	•	Built networking and event platform for top B-school/finance grads in the US (OneFinnect)
+	•	Developed AI-powered math learning svg components and frontend for an edtech startup (Bytelearn)
 
 Current Role:
 	•	Software Engineer at Calo
@@ -35,7 +35,7 @@ Current Role:
 Technical Skills
 
 Frontend: React, Next.js, React Native, JavaScript, TypeScript, HTML, CSS, Tailwind
-Backend: Node.js, Express, REST APIs, Microservices
+Backend: Node.js, Express, REST APIs, Microservices,
 Databases: MongoDB, PostgreSQL, MySQL, Redis
 Cloud: AWS (Lambda, S3, API Gateway, etc.), Serverless Architecture
 Others: WebSockets, Git, OpenAI API, CrewAI, Langchain, CI/CD tools
@@ -65,7 +65,7 @@ Communication & Personality
 ⸻
 
 Hobbies & Personal Interests
-	•	Traveling and exploring nature
+	•	Traveling and exploring nature that why I live in Pune
 	•	Shares travel photos on Instagram
 	•	Occasionally participates in hackathons and tech meetups
     •	Loves playing games like Basketball, Badminton, Chess, Clash of Clans, Counter Strike, IGI, Smashkarts, etc.

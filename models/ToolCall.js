@@ -5,7 +5,7 @@ const ToolCallSchema = new mongoose.Schema(
     // Tool identification
     type: {
       type: String,
-      enum: ['user_details', 'unknown_question'],
+      enum: ['user_details', 'unknown_question', 'irrelevant_question'],
       required: true,
       index: true,
     },
@@ -108,6 +108,9 @@ ToolCallSchema.statics.getToolAnalytics = function () {
     // Unknown questions
     this.countDocuments({ type: 'unknown_question' }),
 
+    // Irrelevant questions
+    this.countDocuments({ type: 'irrelevant_question' }),
+
     // Tool calls today
     this.countDocuments({ timestamp: { $gte: today } }),
 
@@ -131,18 +134,40 @@ ToolCallSchema.statics.getToolAnalytics = function () {
       { $sort: { count: -1 } },
       { $limit: 10 },
     ]),
-  ]).then(([total, userDetails, unknownQuestions, today, thisWeek, successRate, commonQuestions]) => ({
-    total,
-    userDetailsRecorded: userDetails,
-    unknownQuestions,
-    today,
-    thisWeek,
-    successRate: successRate.reduce((acc, item) => {
-      acc[item._id] = item.count;
-      return acc;
-    }, {}),
-    mostCommonUnknownQuestions: commonQuestions,
-  }));
+
+    // Most common irrelevant questions
+    this.aggregate([
+      { $match: { type: 'irrelevant_question' } },
+      { $group: { _id: '$data.question', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 10 },
+    ]),
+  ]).then(
+    ([
+      total,
+      userDetails,
+      unknownQuestions,
+      irrelevantQuestions,
+      today,
+      thisWeek,
+      successRate,
+      commonUnknownQuestions,
+      commonIrrelevantQuestions,
+    ]) => ({
+      total,
+      userDetailsRecorded: userDetails,
+      unknownQuestions,
+      irrelevantQuestions,
+      today,
+      thisWeek,
+      successRate: successRate.reduce((acc, item) => {
+        acc[item._id] = item.count;
+        return acc;
+      }, {}),
+      mostCommonUnknownQuestions: commonUnknownQuestions,
+      mostCommonIrrelevantQuestions: commonIrrelevantQuestions,
+    })
+  );
 };
 
 // Instance methods
