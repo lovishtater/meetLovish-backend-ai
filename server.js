@@ -49,8 +49,8 @@ app.use('/api/admin', adminRoutes);
 // Root endpoint with basic info
 app.get('/', (req, res) => {
   res.json({
-    name: 'Lovish Tater AI Assistant Backend',
-    description: "Backend API for the AI assistant integrated into Lovish Tater's portfolio website",
+    name: `${process.env.USER_NAME} AI Assistant Backend`,
+    description: `Backend API for the AI assistant integrated into ${process.env.USER_NAME}'s portfolio website`,
     version: '1.0.0',
     endpoints: {
       chat: {

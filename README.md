@@ -1,6 +1,6 @@
-# Lovish Tater AI Assistant Backend
+# AI Assistant Backend
 
-A sophisticated Node.js backend for an AI assistant integrated into Lovish Tater's personal portfolio website. The assistant uses OpenAI's GPT API with function calling tools to interact with visitors, collect user details, and track unknown questions.
+A Node.js backend for an AI assistant integrated into my personal portfolio website. The assistant uses OpenAI's GPT API with function calling tools to interact with visitors, collect user details, and track unknown questions.
 
 ## ✨ Features
 
@@ -217,7 +217,7 @@ async function sendMessage(message, sessionId = null, sessionMessages = []) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ message, sessionId, sessionMessages })
   });
-  
+
   return await response.json();
 }
 
@@ -236,18 +236,18 @@ class ChatSession {
     this.sessionId = localStorage.getItem('sessionId');
     this.messages = JSON.parse(localStorage.getItem('messages') || '[]');
   }
-  
+
   async sendMessage(message) {
     const result = await sendMessage(message, this.sessionId, this.messages);
-    
+
     if (result.sessionId) {
       this.sessionId = result.sessionId;
       this.messages = result.sessionMessages;
-      
+
       localStorage.setItem('sessionId', this.sessionId);
       localStorage.setItem('messages', JSON.stringify(this.messages));
     }
-    
+
     return result;
   }
 }
@@ -278,13 +278,13 @@ See `API_DOCUMENTATION.md` for complete endpoint documentation.
 
 ## 📝 Memory System
 
-The AI assistant loads context from `memory.md` which contains:
-- Lovish's professional background
+The AI assistant loads context from environment variable `PERSONAL_INFO` which contains:
+- User's professional background
 - Skills and expertise
 - Professional experience
 - Personal traits and focus areas
 
-Edit this file to update the assistant's knowledge about Lovish.
+Edit this file to update the assistant's knowledge about User.
 
 ## 🚀 Deployment
 
@@ -332,4 +332,4 @@ For questions or issues:
 
 ---
 
-Built with ❤️ for Lovish Tater's portfolio website. 
+Built with ❤️ for Lovish Tater's portfolio website.

@@ -119,7 +119,7 @@ localStorage.setItem('sessionId', data.sessionId);
 POST /api/chat
 Content-Type: application/json
 Body: {
-  "message": "Hello, tell me about Lovish's experience",
+  "message": "Hello, tell me about User's experience",
   "sessionId": "abc123def456",
   "userToken": "xyz789abc123"
 }
@@ -128,7 +128,7 @@ Body: {
 **Response:**
 ```json
 {
-  "message": "Hello! I'm here to tell you about Lovish Tater...",
+  "message": "Hello! I'm here to tell you about User...",
   "sessionId": "abc123def456",
   "userInfo": {
     "name": "John Doe", // User's name if provided during conversation
@@ -209,8 +209,8 @@ GET /
 **Response:**
 ```json
 {
-  "name": "Lovish Tater AI Assistant Backend",
-  "description": "Backend API for the AI assistant integrated into Lovish Tater's portfolio website",
+  "name": "User AI Assistant Backend",
+  "description": "Backend API for the AI assistant integrated into User's portfolio website",
   "version": "1.0.0",
   "endpoints": {
     "chat": {
