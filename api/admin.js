@@ -276,7 +276,6 @@ router.get('/users', requireSecret, async (req, res) => {
       limit: actualLimit,
       timestamp: new Date().toISOString(),
     };
-    console.log(response);
     res.json(response);
   } catch (error) {
     console.error('Admin users endpoint error:', error);

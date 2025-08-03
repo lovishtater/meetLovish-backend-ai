@@ -127,9 +127,6 @@ const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📱 Health check: http://localhost:${PORT}/health`);
   console.log(`💬 Chat endpoint: http://localhost:${PORT}/api/chat`);
-  console.log(
-    `🔧 Admin dashboard: http://localhost:${PORT}/api/admin/dashboard?secret=${process.env.ADMIN_SECRET || 'your-secret-key-here'}`
-  );
   console.log(`⚡ Environment: ${process.env.NODE_ENV || 'development'}`);
 
   // Initialize MongoDB connection

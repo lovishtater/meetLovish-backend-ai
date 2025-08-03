@@ -226,7 +226,6 @@ router.post('/chat', async (req, res) => {
       name: user?.name || null,
       email: user?.email || null,
     };
-    console.log('toolOutputs', toolOutputs);
     // Check if any tool call updated user details
     const userDetailsUpdated = toolOutputs.some(
       output => output.recorded === 'ok' && output.userId && !output.validationError
