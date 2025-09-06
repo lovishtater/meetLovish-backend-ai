@@ -1,47 +1,10 @@
-// In-memory rate limiting store for daily limits
-// In production, you might want to use Redis or a database
-const dailyStore = new Map();
-const userTokenStore = new Map(); // Track by user token
-const ipStore = new Map(); // Track by IP
-const fingerprintStore = new Map(); // Track by browser fingerprint
-
-// Clean up old entries every hour
-setInterval(
-  () => {
-    const now = Date.now();
-
-    // Clean up daily stores
-    for (const [key, data] of dailyStore.entries()) {
-      if (data.resetTime < now) {
-        dailyStore.delete(key);
-      }
-    }
-
-    for (const [key, data] of userTokenStore.entries()) {
-      if (data.resetTime < now) {
-        userTokenStore.delete(key);
-      }
-    }
-
-    for (const [key, data] of ipStore.entries()) {
-      if (data.resetTime < now) {
-        ipStore.delete(key);
-      }
-    }
-
-    for (const [key, data] of fingerprintStore.entries()) {
-      if (data.resetTime < now) {
-        fingerprintStore.delete(key);
-      }
-    }
-  },
-  60 * 60 * 1000
-); // Run every hour
+const RateLimit = require('../models/RateLimit');
 
 class RateLimiter {
   constructor() {
-    // Get daily limit from environment variable, default to 150
-    this.MAX_MESSAGES_PER_DAY = parseInt(process.env.DAILY_MESSAGE_LIMIT) || 50;
+    // Set rate limits: daily 200, hourly 50
+    this.MAX_MESSAGES_PER_DAY = 200;
+    this.MAX_MESSAGES_PER_HOUR = 50;
   }
 
   // Generate session ID based on IP and user agent
@@ -75,60 +38,110 @@ class RateLimiter {
   }
 
   // Check if request is within rate limits (multi-layered)
-  checkRateLimit(sessionId, ip, userToken = null, userInfo = null) {
-    const now = Date.now();
+  async checkRateLimit(sessionId, ip, userToken = null, userInfo = null) {
+    const now = new Date();
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const resetTime = today.getTime() + 24 * 60 * 60 * 1000; // Next midnight
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const nextHour = new Date(now);
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
 
     // Generate fingerprint for additional tracking
     const fingerprint = this.generateFingerprint(userInfo);
 
-    // Check daily limits across multiple identifiers
+    // Check rate limits across multiple identifiers
     const identifiers = [
-      { key: ip, store: ipStore, type: 'IP' },
-      { key: userToken, store: userTokenStore, type: 'User Token' },
-      { key: fingerprint, store: fingerprintStore, type: 'Fingerprint' },
+      { key: ip, type: 'ip' },
+      { key: userToken, type: 'userToken' },
+      { key: fingerprint, type: 'fingerprint' },
     ].filter(id => id.key); // Only check valid identifiers
 
     let maxDailyCount = 0;
+    let maxHourlyCount = 0;
     let exceededIdentifier = null;
+    let exceededLimit = null;
 
     for (const identifier of identifiers) {
-      let data = identifier.store.get(identifier.key);
-      if (!data) {
-        data = {
-          messageCount: 0,
-          resetTime: resetTime,
-        };
-        identifier.store.set(identifier.key, data);
-      }
+      try {
+        // Use findOneAndUpdate with upsert to atomically check and update
+        const result = await RateLimit.findOneAndUpdate(
+          {
+            identifier: identifier.key,
+            type: identifier.type,
+          },
+          {
+            $setOnInsert: {
+              identifier: identifier.key,
+              type: identifier.type,
+              dailyCount: 0,
+              hourlyCount: 0,
+              dailyResetTime: tomorrow,
+              hourlyResetTime: nextHour,
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+          }
+        );
 
-      // Reset daily count if it's a new day
-      if (data.resetTime < now) {
-        data.messageCount = 0;
-        data.resetTime = resetTime;
-      }
+        // Check if we need to reset counts
+        const shouldResetDaily = result.dailyResetTime < now;
+        const shouldResetHourly = result.hourlyResetTime < now;
 
-      // Track the highest count across all identifiers
-      if (data.messageCount > maxDailyCount) {
-        maxDailyCount = data.messageCount;
-      }
+        if (shouldResetDaily || shouldResetHourly) {
+          const updateData = {};
+          if (shouldResetDaily) {
+            updateData.dailyCount = 0;
+            updateData.dailyResetTime = tomorrow;
+          }
+          if (shouldResetHourly) {
+            updateData.hourlyCount = 0;
+            updateData.hourlyResetTime = nextHour;
+          }
 
-      // Check if this identifier has exceeded the limit
-      if (data.messageCount >= this.MAX_MESSAGES_PER_DAY) {
-        exceededIdentifier = identifier;
-        break;
+          await RateLimit.findByIdAndUpdate(result._id, updateData);
+          result.dailyCount = shouldResetDaily ? 0 : result.dailyCount;
+          result.hourlyCount = shouldResetHourly ? 0 : result.hourlyCount;
+        }
+
+        // Track the highest counts across all identifiers
+        if (result.dailyCount > maxDailyCount) {
+          maxDailyCount = result.dailyCount;
+        }
+        if (result.hourlyCount > maxHourlyCount) {
+          maxHourlyCount = result.hourlyCount;
+        }
+
+        // Check if this identifier has exceeded any limit
+        if (result.dailyCount >= this.MAX_MESSAGES_PER_DAY) {
+          exceededIdentifier = identifier;
+          exceededLimit = 'daily';
+          break;
+        }
+        if (result.hourlyCount >= this.MAX_MESSAGES_PER_HOUR) {
+          exceededIdentifier = identifier;
+          exceededLimit = 'hourly';
+          break;
+        }
+      } catch (error) {
+        console.error('Rate limit check error:', error);
+        // If database error, allow the request but log it
+        continue;
       }
     }
 
     if (exceededIdentifier) {
-      console.log('Exceeded identifier:', exceededIdentifier.type);
+      console.log(`Rate limit exceeded: ${exceededLimit} limit by ${exceededIdentifier.type}`);
       return {
         allowed: false,
-        reason: 'daily_limit',
+        reason: `${exceededLimit}_limit`,
         dailyCount: maxDailyCount,
-        resetTime: resetTime,
+        hourlyCount: maxHourlyCount,
+        dailyResetTime: tomorrow.getTime(),
+        hourlyResetTime: nextHour.getTime(),
         exceededBy: exceededIdentifier.type,
       };
     }
@@ -136,65 +149,139 @@ class RateLimiter {
     return {
       allowed: true,
       dailyCount: maxDailyCount,
-      resetTime: resetTime,
+      hourlyCount: maxHourlyCount,
+      dailyResetTime: tomorrow.getTime(),
+      hourlyResetTime: nextHour.getTime(),
     };
   }
 
   // Increment message count across all identifiers
-  incrementCount(sessionId, ip, userToken = null, userInfo = null) {
+  async incrementCount(sessionId, ip, userToken = null, userInfo = null) {
+    const now = new Date();
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const nextHour = new Date(now);
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+
     const fingerprint = this.generateFingerprint(userInfo);
 
     // Increment counts for all valid identifiers
     const identifiers = [
-      { key: ip, store: ipStore },
-      { key: userToken, store: userTokenStore },
-      { key: fingerprint, store: fingerprintStore },
+      { key: ip, type: 'ip' },
+      { key: userToken, type: 'userToken' },
+      { key: fingerprint, type: 'fingerprint' },
     ].filter(id => id.key);
 
+    let maxDailyCount = 0;
+    let maxHourlyCount = 0;
+
     for (const identifier of identifiers) {
-      const data = identifier.store.get(identifier.key);
-      if (data) {
-        data.messageCount++;
+      try {
+        // Use findOneAndUpdate with $inc to atomically increment counts
+        const result = await RateLimit.findOneAndUpdate(
+          {
+            identifier: identifier.key,
+            type: identifier.type,
+          },
+          {
+            $inc: {
+              dailyCount: 1,
+              hourlyCount: 1,
+            },
+            $setOnInsert: {
+              identifier: identifier.key,
+              type: identifier.type,
+              dailyResetTime: tomorrow,
+              hourlyResetTime: nextHour,
+            },
+          },
+          {
+            upsert: true,
+            new: true,
+          }
+        );
+
+        // Track the highest counts across all identifiers
+        if (result.dailyCount > maxDailyCount) {
+          maxDailyCount = result.dailyCount;
+        }
+        if (result.hourlyCount > maxHourlyCount) {
+          maxHourlyCount = result.hourlyCount;
+        }
+      } catch (error) {
+        console.error('Rate limit increment error:', error);
+        // Continue with other identifiers even if one fails
       }
     }
 
-    // Return the highest count across all identifiers
-    const counts = identifiers.map(id => id.store.get(id.key)?.messageCount || 0);
-    const maxCount = Math.max(...counts, 0);
-
     return {
-      dailyCount: maxCount,
+      dailyCount: maxDailyCount,
+      hourlyCount: maxHourlyCount,
     };
   }
 
   // Get current counts across all identifiers
-  getCounts(sessionId, ip, userToken = null, userInfo = null) {
+  async getCounts(sessionId, ip, userToken = null, userInfo = null) {
     const fingerprint = this.generateFingerprint(userInfo);
 
     const identifiers = [
-      { key: ip, store: ipStore },
-      { key: userToken, store: userTokenStore },
-      { key: fingerprint, store: fingerprintStore },
+      { key: ip, type: 'ip' },
+      { key: userToken, type: 'userToken' },
+      { key: fingerprint, type: 'fingerprint' },
     ].filter(id => id.key);
 
-    const counts = identifiers.map(id => id.store.get(id.key)?.messageCount || 0);
-    const maxCount = Math.max(...counts, 0);
+    let maxDailyCount = 0;
+    let maxHourlyCount = 0;
+
+    for (const identifier of identifiers) {
+      try {
+        const result = await RateLimit.findOne({
+          identifier: identifier.key,
+          type: identifier.type,
+        });
+
+        if (result) {
+          if (result.dailyCount > maxDailyCount) {
+            maxDailyCount = result.dailyCount;
+          }
+          if (result.hourlyCount > maxHourlyCount) {
+            maxHourlyCount = result.hourlyCount;
+          }
+        }
+      } catch (error) {
+        console.error('Rate limit get counts error:', error);
+        // Continue with other identifiers even if one fails
+      }
+    }
 
     return {
-      dailyCount: maxCount,
+      dailyCount: maxDailyCount,
+      hourlyCount: maxHourlyCount,
       maxDaily: this.MAX_MESSAGES_PER_DAY,
+      maxHourly: this.MAX_MESSAGES_PER_HOUR,
     };
   }
 
   // Get rate limit status for response headers
-  getRateLimitHeaders(sessionId, ip, userToken = null, userInfo = null) {
-    const counts = this.getCounts(sessionId, ip, userToken, userInfo);
-    const dailyData = ipStore.get(ip);
+  async getRateLimitHeaders(sessionId, ip, userToken = null, userInfo = null) {
+    const counts = await this.getCounts(sessionId, ip, userToken, userInfo);
+    const now = new Date();
+    const nextHour = new Date(now);
+    nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
+    const tomorrow = new Date();
+    tomorrow.setHours(0, 0, 0, 0);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
     return {
       'X-RateLimit-Daily-Limit': this.MAX_MESSAGES_PER_DAY,
       'X-RateLimit-Daily-Remaining': Math.max(0, this.MAX_MESSAGES_PER_DAY - counts.dailyCount),
-      'X-RateLimit-Reset': dailyData?.resetTime || 0,
+      'X-RateLimit-Daily-Reset': tomorrow.getTime(),
+      'X-RateLimit-Hourly-Limit': this.MAX_MESSAGES_PER_HOUR,
+      'X-RateLimit-Hourly-Remaining': Math.max(0, this.MAX_MESSAGES_PER_HOUR - counts.hourlyCount),
+      'X-RateLimit-Hourly-Reset': nextHour.getTime(),
     };
   }
 }

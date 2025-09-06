@@ -71,7 +71,8 @@ app.get('/', (req, res) => {
       // },
     },
     rateLimits: {
-      daily: `${process.env.DAILY_MESSAGE_LIMIT} messages per day per IP`,
+      daily: '200 messages per day per IP',
+      hourly: '50 messages per hour per IP',
     },
   });
 });

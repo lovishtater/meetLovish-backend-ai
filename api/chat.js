@@ -78,10 +78,10 @@ router.post('/chat/init', async (req, res) => {
     }
 
     // Initialize rate limit tracking
-    const rateLimitResult = rateLimiter.checkRateLimit(sessionId, userInfo.ip, token, userInfo);
+    const rateLimitResult = await rateLimiter.checkRateLimit(sessionId, userInfo.ip, token, userInfo);
 
     // Get rate limit headers
-    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, token, userInfo);
+    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, token, userInfo);
     Object.entries(rateLimitHeaders).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
@@ -98,7 +98,9 @@ router.post('/chat/init', async (req, res) => {
       },
       rateLimits: {
         dailyCount: rateLimitResult.dailyCount,
+        hourlyCount: rateLimitResult.hourlyCount,
         dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+        hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
       },
       timestamp: new Date().toISOString(),
     });
@@ -141,22 +143,28 @@ router.post('/chat', async (req, res) => {
     const currentSessionId = sessionId;
 
     // Check rate limits
-    const rateLimitResult = rateLimiter.checkRateLimit(currentSessionId, userInfo.ip, userToken, userInfo);
+    const rateLimitResult = await rateLimiter.checkRateLimit(currentSessionId, userInfo.ip, userToken, userInfo);
 
     if (!rateLimitResult.allowed) {
-      const errorMessage = `Daily limit reached. You can send up to ${rateLimiter.MAX_MESSAGES_PER_DAY} messages per day. Please try again tomorrow`;
+      const limitType = rateLimitResult.reason === 'daily_limit' ? 'daily' : 'hourly';
+      const limitValue =
+        rateLimitResult.reason === 'daily_limit' ? rateLimiter.MAX_MESSAGES_PER_DAY : rateLimiter.MAX_MESSAGES_PER_HOUR;
+      const resetTime =
+        rateLimitResult.reason === 'daily_limit' ? rateLimitResult.dailyResetTime : rateLimitResult.hourlyResetTime;
+      const errorMessage = `${limitType.charAt(0).toUpperCase() + limitType.slice(1)} limit reached. You can send up to ${limitValue} messages per ${limitType}. Please try again later.`;
 
       return res.status(429).json({
         error: errorMessage,
         reason: rateLimitResult.reason,
         dailyCount: rateLimitResult.dailyCount,
-        resetTime: rateLimitResult.resetTime,
+        hourlyCount: rateLimitResult.hourlyCount,
+        resetTime: resetTime,
         exceededBy: rateLimitResult.exceededBy,
       });
     }
 
     // Increment rate limit counters
-    const counts = rateLimiter.incrementCount(currentSessionId, userInfo.ip, userToken, userInfo);
+    const counts = await rateLimiter.incrementCount(currentSessionId, userInfo.ip, userToken, userInfo);
 
     // Find user by token if provided
     let user = null;
@@ -254,11 +262,11 @@ router.post('/chat', async (req, res) => {
       userMessage: message,
       assistantMessage: response.content,
       toolOutputs,
-      messageCount: counts.sessionCount,
+      messageCount: counts.dailyCount,
     });
 
     // Set rate limit headers
-    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(currentSessionId, userInfo.ip, userToken, userInfo);
+    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(currentSessionId, userInfo.ip, userToken, userInfo);
     Object.entries(rateLimitHeaders).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
@@ -271,7 +279,9 @@ router.post('/chat', async (req, res) => {
       userInfo: updatedUserInfo,
       rateLimits: {
         dailyCount: counts.dailyCount,
+        hourlyCount: counts.hourlyCount,
         dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+        hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
       },
     });
   } catch (error) {
@@ -291,7 +301,7 @@ router.post('/chat', async (req, res) => {
 });
 
 // GET /api/chat/status - Get session status and rate limits
-router.get('/chat/status', (req, res) => {
+router.get('/chat/status', async (req, res) => {
   try {
     const { sessionId } = req.query;
     const userInfo = getUserInfo(req);
@@ -300,16 +310,16 @@ router.get('/chat/status', (req, res) => {
       return res.json({
         sessionId: null,
         rateLimits: {
-          sessionCount: 0,
           dailyCount: 0,
-          sessionLimit: rateLimiter.MAX_MESSAGES_PER_SESSION,
+          hourlyCount: 0,
           dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+          hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
         },
       });
     }
 
-    const counts = rateLimiter.getCounts(sessionId, userInfo.ip, null, userInfo);
-    const rateLimitHeaders = rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, null, userInfo);
+    const counts = await rateLimiter.getCounts(sessionId, userInfo.ip, null, userInfo);
+    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, null, userInfo);
 
     // Set rate limit headers
     Object.entries(rateLimitHeaders).forEach(([key, value]) => {
@@ -320,8 +330,11 @@ router.get('/chat/status', (req, res) => {
       sessionId,
       rateLimits: {
         dailyCount: counts.dailyCount,
+        hourlyCount: counts.hourlyCount,
         dailyLimit: counts.maxDaily,
+        hourlyLimit: counts.maxHourly,
         dailyRemaining: Math.max(0, counts.maxDaily - counts.dailyCount),
+        hourlyRemaining: Math.max(0, counts.maxHourly - counts.hourlyCount),
       },
     });
   } catch (error) {
