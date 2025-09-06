@@ -9,6 +9,10 @@ class RateLimiter {
 
     // Fallback in-memory store for when database is unavailable
     this.fallbackStore = new Map();
+
+    // Cache for rate limit checks (5 second TTL)
+    this.cache = new Map();
+    this.cacheTimeout = 5000; // 5 seconds
   }
 
   // Ensure database connection is ready
@@ -24,6 +28,16 @@ class RateLimiter {
       }
     }
     return database.isConnectionReady();
+  }
+
+  // Clean up expired cache entries
+  cleanupCache() {
+    const now = Date.now();
+    for (const [key, value] of this.cache.entries()) {
+      if (now - value.timestamp > this.cacheTimeout) {
+        this.cache.delete(key);
+      }
+    }
   }
 
   // Fallback rate limiting using in-memory store
@@ -201,6 +215,14 @@ class RateLimiter {
 
   // Check if request is within rate limits (multi-layered)
   async checkRateLimit(sessionId, ip, userToken = null, userInfo = null) {
+    // Check cache first
+    const cacheKey = `check:${ip}:${userToken || 'null'}`;
+    const cached = this.cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+      console.log('🚀 [RATE_LIMIT] Using cached result');
+      return cached.result;
+    }
+
     // Ensure database connection is ready
     const dbReady = await this.ensureDatabaseConnection();
     if (!dbReady) {
@@ -232,48 +254,58 @@ class RateLimiter {
     let exceededIdentifier = null;
     let exceededLimit = null;
 
-    for (const identifier of identifiers) {
-      try {
-        // Use findOneAndUpdate with upsert to atomically check and update
-        const result = await RateLimit.findOneAndUpdate(
-          {
+    // Optimize: Use bulk operations to reduce database calls
+    try {
+      // First, get all existing rate limits in one query
+      const existingLimits = await RateLimit.find({
+        $or: identifiers.map(id => ({
+          identifier: id.key,
+          type: id.type,
+        })),
+      });
+
+      // Create a map for quick lookup
+      const limitsMap = new Map();
+      existingLimits.forEach(limit => {
+        limitsMap.set(`${limit.type}:${limit.identifier}`, limit);
+      });
+
+      // Process each identifier
+      for (const identifier of identifiers) {
+        const key = `${identifier.type}:${identifier.key}`;
+        let result = limitsMap.get(key);
+
+        if (!result) {
+          // Create new rate limit record
+          result = new RateLimit({
             identifier: identifier.key,
             type: identifier.type,
-          },
-          {
-            $setOnInsert: {
-              identifier: identifier.key,
-              type: identifier.type,
-              dailyCount: 0,
-              hourlyCount: 0,
-              dailyResetTime: tomorrow,
-              hourlyResetTime: nextHour,
-            },
-          },
-          {
-            upsert: true,
-            new: true,
-          }
-        );
+            dailyCount: 0,
+            hourlyCount: 0,
+            dailyResetTime: tomorrow,
+            hourlyResetTime: nextHour,
+          });
+          await result.save();
+        } else {
+          // Check if we need to reset counts
+          const shouldResetDaily = result.dailyResetTime < now;
+          const shouldResetHourly = result.hourlyResetTime < now;
 
-        // Check if we need to reset counts
-        const shouldResetDaily = result.dailyResetTime < now;
-        const shouldResetHourly = result.hourlyResetTime < now;
+          if (shouldResetDaily || shouldResetHourly) {
+            const updateData = {};
+            if (shouldResetDaily) {
+              updateData.dailyCount = 0;
+              updateData.dailyResetTime = tomorrow;
+            }
+            if (shouldResetHourly) {
+              updateData.hourlyCount = 0;
+              updateData.hourlyResetTime = nextHour;
+            }
 
-        if (shouldResetDaily || shouldResetHourly) {
-          const updateData = {};
-          if (shouldResetDaily) {
-            updateData.dailyCount = 0;
-            updateData.dailyResetTime = tomorrow;
+            await RateLimit.findByIdAndUpdate(result._id, updateData);
+            result.dailyCount = shouldResetDaily ? 0 : result.dailyCount;
+            result.hourlyCount = shouldResetHourly ? 0 : result.hourlyCount;
           }
-          if (shouldResetHourly) {
-            updateData.hourlyCount = 0;
-            updateData.hourlyResetTime = nextHour;
-          }
-
-          await RateLimit.findByIdAndUpdate(result._id, updateData);
-          result.dailyCount = shouldResetDaily ? 0 : result.dailyCount;
-          result.hourlyCount = shouldResetHourly ? 0 : result.hourlyCount;
         }
 
         // Track the highest counts across all identifiers
@@ -295,16 +327,80 @@ class RateLimiter {
           exceededLimit = 'hourly';
           break;
         }
-      } catch (error) {
-        console.error('Rate limit check error:', error);
-        // If database error, allow the request but log it
-        continue;
+      }
+    } catch (error) {
+      console.error('Bulk rate limit check error:', error);
+      // Fall back to individual operations
+      for (const identifier of identifiers) {
+        try {
+          const result = await RateLimit.findOneAndUpdate(
+            {
+              identifier: identifier.key,
+              type: identifier.type,
+            },
+            {
+              $setOnInsert: {
+                identifier: identifier.key,
+                type: identifier.type,
+                dailyCount: 0,
+                hourlyCount: 0,
+                dailyResetTime: tomorrow,
+                hourlyResetTime: nextHour,
+              },
+            },
+            {
+              upsert: true,
+              new: true,
+            }
+          );
+
+          const shouldResetDaily = result.dailyResetTime < now;
+          const shouldResetHourly = result.hourlyResetTime < now;
+
+          if (shouldResetDaily || shouldResetHourly) {
+            const updateData = {};
+            if (shouldResetDaily) {
+              updateData.dailyCount = 0;
+              updateData.dailyResetTime = tomorrow;
+            }
+            if (shouldResetHourly) {
+              updateData.hourlyCount = 0;
+              updateData.hourlyResetTime = nextHour;
+            }
+
+            await RateLimit.findByIdAndUpdate(result._id, updateData);
+            result.dailyCount = shouldResetDaily ? 0 : result.dailyCount;
+            result.hourlyCount = shouldResetHourly ? 0 : result.hourlyCount;
+          }
+
+          if (result.dailyCount > maxDailyCount) {
+            maxDailyCount = result.dailyCount;
+          }
+          if (result.hourlyCount > maxHourlyCount) {
+            maxHourlyCount = result.hourlyCount;
+          }
+
+          if (result.dailyCount >= this.MAX_MESSAGES_PER_DAY) {
+            exceededIdentifier = identifier;
+            exceededLimit = 'daily';
+            break;
+          }
+          if (result.hourlyCount >= this.MAX_MESSAGES_PER_HOUR) {
+            exceededIdentifier = identifier;
+            exceededLimit = 'hourly';
+            break;
+          }
+        } catch (individualError) {
+          console.error('Individual rate limit check error:', individualError);
+          continue;
+        }
       }
     }
 
+    let result;
     if (exceededIdentifier) {
       console.log(`Rate limit exceeded: ${exceededLimit} limit by ${exceededIdentifier.type}`);
-      return {
+      result = {
         allowed: false,
         reason: `${exceededLimit}_limit`,
         dailyCount: maxDailyCount,
@@ -313,19 +409,34 @@ class RateLimiter {
         hourlyResetTime: nextHour.getTime(),
         exceededBy: exceededIdentifier.type,
       };
+    } else {
+      result = {
+        allowed: true,
+        dailyCount: maxDailyCount,
+        hourlyCount: maxHourlyCount,
+        dailyResetTime: tomorrow.getTime(),
+        hourlyResetTime: nextHour.getTime(),
+      };
     }
 
-    return {
-      allowed: true,
-      dailyCount: maxDailyCount,
-      hourlyCount: maxHourlyCount,
-      dailyResetTime: tomorrow.getTime(),
-      hourlyResetTime: nextHour.getTime(),
-    };
+    // Cache the result
+    this.cache.set(cacheKey, {
+      result,
+      timestamp: Date.now(),
+    });
+
+    // Clean up old cache entries
+    this.cleanupCache();
+
+    return result;
   }
 
   // Increment message count across all identifiers
   async incrementCount(sessionId, ip, userToken = null, userInfo = null) {
+    // Invalidate cache when counts are incremented
+    const cacheKey = `check:${ip}:${userToken || 'null'}`;
+    this.cache.delete(cacheKey);
+
     // Ensure database connection is ready
     const dbReady = await this.ensureDatabaseConnection();
     if (!dbReady) {
@@ -354,15 +465,16 @@ class RateLimiter {
     let maxDailyCount = 0;
     let maxHourlyCount = 0;
 
-    for (const identifier of identifiers) {
-      try {
-        // Use findOneAndUpdate with $inc to atomically increment counts
-        const result = await RateLimit.findOneAndUpdate(
-          {
+    // Optimize: Use bulk operations for incrementing counts
+    try {
+      // Use bulkWrite for better performance
+      const bulkOps = identifiers.map(identifier => ({
+        updateOne: {
+          filter: {
             identifier: identifier.key,
             type: identifier.type,
           },
-          {
+          update: {
             $inc: {
               dailyCount: 1,
               hourlyCount: 1,
@@ -374,22 +486,66 @@ class RateLimiter {
               hourlyResetTime: nextHour,
             },
           },
-          {
-            upsert: true,
-            new: true,
-          }
-        );
+          upsert: true,
+        },
+      }));
 
-        // Track the highest counts across all identifiers
+      await RateLimit.bulkWrite(bulkOps);
+
+      // Get updated counts in one query
+      const updatedLimits = await RateLimit.find({
+        $or: identifiers.map(id => ({
+          identifier: id.key,
+          type: id.type,
+        })),
+      });
+
+      // Track the highest counts across all identifiers
+      updatedLimits.forEach(result => {
         if (result.dailyCount > maxDailyCount) {
           maxDailyCount = result.dailyCount;
         }
         if (result.hourlyCount > maxHourlyCount) {
           maxHourlyCount = result.hourlyCount;
         }
-      } catch (error) {
-        console.error('Rate limit increment error:', error);
-        // Continue with other identifiers even if one fails
+      });
+    } catch (error) {
+      console.error('Bulk increment error:', error);
+      // Fall back to individual operations
+      for (const identifier of identifiers) {
+        try {
+          const result = await RateLimit.findOneAndUpdate(
+            {
+              identifier: identifier.key,
+              type: identifier.type,
+            },
+            {
+              $inc: {
+                dailyCount: 1,
+                hourlyCount: 1,
+              },
+              $setOnInsert: {
+                identifier: identifier.key,
+                type: identifier.type,
+                dailyResetTime: tomorrow,
+                hourlyResetTime: nextHour,
+              },
+            },
+            {
+              upsert: true,
+              new: true,
+            }
+          );
+
+          if (result.dailyCount > maxDailyCount) {
+            maxDailyCount = result.dailyCount;
+          }
+          if (result.hourlyCount > maxHourlyCount) {
+            maxHourlyCount = result.hourlyCount;
+          }
+        } catch (individualError) {
+          console.error('Individual increment error:', individualError);
+        }
       }
     }
 
