@@ -25,7 +25,6 @@ class Database {
 
         // For serverless environments
         bufferCommands: false, // Disable mongoose buffering
-        bufferMaxEntries: 0, // Disable mongoose buffering
       };
 
       const mongoUri = process.env.MONGODB_URI;
