@@ -122,8 +122,8 @@ class Database {
 
   async waitForConnection(timeoutMs = 30000) {
     return new Promise((resolve, reject) => {
-      // If already connected, resolve immediately
-      if (this.isConnectionReady()) {
+      // Check if already connected - use mongoose's readyState directly
+      if (mongoose.connection.readyState === 1) {
         resolve(true);
         return;
       }
@@ -134,7 +134,7 @@ class Database {
 
       // Set up event listeners to detect when connection is ready
       const checkConnection = () => {
-        if (this.isConnectionReady()) {
+        if (mongoose.connection.readyState === 1) {
           clearTimeout(timeout);
           resolve(true);
         }
@@ -150,23 +150,17 @@ class Database {
         reject(error);
       });
 
-      // Check if connection is already in progress or connected
+      // Check current state and act accordingly
       const readyState = mongoose.connection.readyState;
       if (readyState === 1) {
-        // Already connected
+        // Already connected (double check)
         clearTimeout(timeout);
         resolve(true);
       } else if (readyState === 2) {
         // Connecting - just wait for the events
         return;
-      } else if (readyState === 0) {
-        // Disconnected - start connection
-        this.connect().catch(error => {
-          clearTimeout(timeout);
-          reject(error);
-        });
       } else {
-        // Disconnecting or unknown state - start connection
+        // Disconnected or other state - start connection
         this.connect().catch(error => {
           clearTimeout(timeout);
           reject(error);
