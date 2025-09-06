@@ -151,7 +151,7 @@ router.post('/chat', async (req, res) => {
         rateLimitResult.reason === 'daily_limit' ? rateLimiter.MAX_MESSAGES_PER_DAY : rateLimiter.MAX_MESSAGES_PER_HOUR;
       const resetTime =
         rateLimitResult.reason === 'daily_limit' ? rateLimitResult.dailyResetTime : rateLimitResult.hourlyResetTime;
-      const errorMessage = `${limitType.charAt(0).toUpperCase() + limitType.slice(1)} limit reached. You can send up to ${limitValue} messages per ${limitType}. Please try again later.`;
+      const errorMessage = `${limitType.charAt(0).toUpperCase() + limitType.slice(1)} limit reached. You can send up to ${limitValue} messages per ${limitType}. Please try again later in ${Math.floor((resetTime - Date.now()) / 1000 / 60)} minutes.`;
 
       return res.status(429).json({
         error: errorMessage,
