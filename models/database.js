@@ -150,8 +150,23 @@ class Database {
         reject(error);
       });
 
-      // If we're not already trying to connect, start the connection
-      if (mongoose.connection.readyState === 0) {
+      // Check if connection is already in progress or connected
+      const readyState = mongoose.connection.readyState;
+      if (readyState === 1) {
+        // Already connected
+        clearTimeout(timeout);
+        resolve(true);
+      } else if (readyState === 2) {
+        // Connecting - just wait for the events
+        return;
+      } else if (readyState === 0) {
+        // Disconnected - start connection
+        this.connect().catch(error => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      } else {
+        // Disconnecting or unknown state - start connection
         this.connect().catch(error => {
           clearTimeout(timeout);
           reject(error);
