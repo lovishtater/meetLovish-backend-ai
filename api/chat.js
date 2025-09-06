@@ -122,9 +122,8 @@ router.post('/chat/init', async (req, res) => {
       },
       rateLimits: {
         dailyCount: rateLimitResult.dailyCount,
-        hourlyCount: rateLimitResult.hourlyCount,
         dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
-        hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
+        dailyRemaining: Math.max(0, rateLimiter.MAX_MESSAGES_PER_DAY - rateLimitResult.dailyCount),
       },
       timestamp: new Date().toISOString(),
     });
@@ -177,24 +176,19 @@ router.post('/chat', async (req, res) => {
     console.log(`⏱️ [CHAT] Rate limit check & increment: ${Date.now() - rateLimitStart}ms`);
 
     if (!rateLimitResult.allowed) {
-      const limitType = rateLimitResult.reason === 'daily_limit' ? 'daily' : 'hourly';
-      const limitValue =
-        rateLimitResult.reason === 'daily_limit' ? rateLimiter.MAX_MESSAGES_PER_DAY : rateLimiter.MAX_MESSAGES_PER_HOUR;
-      const resetTime =
-        rateLimitResult.reason === 'daily_limit' ? rateLimitResult.dailyResetTime : rateLimitResult.hourlyResetTime;
-      const errorMessage = `${limitType.charAt(0).toUpperCase() + limitType.slice(1)} limit reached. You can send up to ${limitValue} messages per ${limitType}. Please try again later in ${Math.floor((resetTime - Date.now()) / 1000 / 60)} minutes.`;
+      const resetTime = rateLimitResult.dailyResetTime;
+      const errorMessage = `Daily limit reached. You can send up to ${rateLimiter.MAX_MESSAGES_PER_DAY} messages per day. Please try again later in ${Math.floor((resetTime - Date.now()) / 1000 / 60)} minutes.`;
 
       return res.status(429).json({
         error: errorMessage,
         reason: rateLimitResult.reason,
         dailyCount: rateLimitResult.dailyCount,
-        hourlyCount: rateLimitResult.hourlyCount,
         resetTime: resetTime,
         exceededBy: rateLimitResult.exceededBy,
       });
     }
 
-    const counts = { dailyCount: rateLimitResult.dailyCount, hourlyCount: rateLimitResult.hourlyCount };
+    const counts = { dailyCount: rateLimitResult.dailyCount };
 
     // Parallelize database operations
     let user = null;
@@ -350,9 +344,8 @@ router.post('/chat', async (req, res) => {
       userInfo: updatedUserInfo,
       rateLimits: {
         dailyCount: counts.dailyCount,
-        hourlyCount: counts.hourlyCount,
         dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
-        hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
+        dailyRemaining: Math.max(0, rateLimiter.MAX_MESSAGES_PER_DAY - counts.dailyCount),
       },
     });
   } catch (error) {
@@ -382,9 +375,8 @@ router.get('/chat/status', async (req, res) => {
         sessionId: null,
         rateLimits: {
           dailyCount: 0,
-          hourlyCount: 0,
           dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
-          hourlyLimit: rateLimiter.MAX_MESSAGES_PER_HOUR,
+          dailyRemaining: rateLimiter.MAX_MESSAGES_PER_DAY,
         },
       });
     }
@@ -401,11 +393,8 @@ router.get('/chat/status', async (req, res) => {
       sessionId,
       rateLimits: {
         dailyCount: counts.dailyCount,
-        hourlyCount: counts.hourlyCount,
         dailyLimit: counts.maxDaily,
-        hourlyLimit: counts.maxHourly,
         dailyRemaining: Math.max(0, counts.maxDaily - counts.dailyCount),
-        hourlyRemaining: Math.max(0, counts.maxHourly - counts.hourlyCount),
       },
     });
   } catch (error) {

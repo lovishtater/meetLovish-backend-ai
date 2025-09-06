@@ -3,9 +3,8 @@ const database = require('../models/database');
 
 class RateLimiter {
   constructor() {
-    // Set rate limits: daily 200, hourly 50
-    this.MAX_MESSAGES_PER_DAY = 200;
-    this.MAX_MESSAGES_PER_HOUR = 50;
+    // Set rate limits: daily 80
+    this.MAX_MESSAGES_PER_DAY = 80;
   }
 
   // Simple rate limit check - just increment and check in one operation
@@ -19,24 +18,21 @@ class RateLimiter {
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
 
-      const nextHour = new Date(now);
-      nextHour.setHours(nextHour.getHours() + 1, 0, 0, 0);
-
       // Simple: just use IP for rate limiting
+      console.time('RateLimit.findOneAndUpdate');
       const result = await RateLimit.findOneAndUpdate(
         { identifier: ip, type: 'ip' },
         {
-          $inc: { dailyCount: 1, hourlyCount: 1 },
+          $inc: { dailyCount: 1 },
           $setOnInsert: {
             identifier: ip,
             type: 'ip',
             dailyResetTime: tomorrow,
-            hourlyResetTime: nextHour,
           },
         },
         { upsert: true, new: true }
       );
-
+      console.timeEnd('RateLimit.findOneAndUpdate');
       // Check if we need to reset counts
       if (result.dailyResetTime < now) {
         await RateLimit.findByIdAndUpdate(result._id, {
@@ -44,14 +40,7 @@ class RateLimiter {
           dailyResetTime: tomorrow,
         });
         result.dailyCount = 1;
-      }
-
-      if (result.hourlyResetTime < now) {
-        await RateLimit.findByIdAndUpdate(result._id, {
-          hourlyCount: 1,
-          hourlyResetTime: nextHour,
-        });
-        result.hourlyCount = 1;
+        result.dailyResetTime = tomorrow;
       }
 
       // Check limits
@@ -60,21 +49,7 @@ class RateLimiter {
           allowed: false,
           reason: 'daily_limit',
           dailyCount: result.dailyCount,
-          hourlyCount: result.hourlyCount,
           dailyResetTime: tomorrow.getTime(),
-          hourlyResetTime: nextHour.getTime(),
-          exceededBy: 'ip',
-        };
-      }
-
-      if (result.hourlyCount > this.MAX_MESSAGES_PER_HOUR) {
-        return {
-          allowed: false,
-          reason: 'hourly_limit',
-          dailyCount: result.dailyCount,
-          hourlyCount: result.hourlyCount,
-          dailyResetTime: tomorrow.getTime(),
-          hourlyResetTime: nextHour.getTime(),
           exceededBy: 'ip',
         };
       }
@@ -82,9 +57,7 @@ class RateLimiter {
       return {
         allowed: true,
         dailyCount: result.dailyCount,
-        hourlyCount: result.hourlyCount,
         dailyResetTime: tomorrow.getTime(),
-        hourlyResetTime: nextHour.getTime(),
       };
     } catch (error) {
       console.error('Rate limit error:', error);
@@ -92,9 +65,7 @@ class RateLimiter {
       return {
         allowed: true,
         dailyCount: 1,
-        hourlyCount: 1,
         dailyResetTime: Date.now() + 24 * 60 * 60 * 1000,
-        hourlyResetTime: Date.now() + 60 * 60 * 1000,
       };
     }
   }
@@ -118,25 +89,19 @@ class RateLimiter {
       if (result) {
         return {
           dailyCount: result.dailyCount,
-          hourlyCount: result.hourlyCount,
           maxDaily: this.MAX_MESSAGES_PER_DAY,
-          maxHourly: this.MAX_MESSAGES_PER_HOUR,
         };
       }
 
       return {
         dailyCount: 0,
-        hourlyCount: 0,
         maxDaily: this.MAX_MESSAGES_PER_DAY,
-        maxHourly: this.MAX_MESSAGES_PER_HOUR,
       };
     } catch (error) {
       console.error('Get counts error:', error);
       return {
         dailyCount: 0,
-        hourlyCount: 0,
         maxDaily: this.MAX_MESSAGES_PER_DAY,
-        maxHourly: this.MAX_MESSAGES_PER_HOUR,
       };
     }
   }
@@ -157,8 +122,7 @@ class RateLimiter {
     return {
       'X-RateLimit-Daily-Limit': this.MAX_MESSAGES_PER_DAY,
       'X-RateLimit-Daily-Remaining': Math.max(0, this.MAX_MESSAGES_PER_DAY - counts.dailyCount),
-      'X-RateLimit-Hourly-Limit': this.MAX_MESSAGES_PER_HOUR,
-      'X-RateLimit-Hourly-Remaining': Math.max(0, this.MAX_MESSAGES_PER_HOUR - counts.hourlyCount),
+      'X-RateLimit-Daily-Used': counts.dailyCount,
     };
   }
 }
