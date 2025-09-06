@@ -23,12 +23,10 @@ const rateLimitSchema = new mongoose.Schema(
     dailyResetTime: {
       type: Date,
       required: true,
-      index: { expireAfterSeconds: 0 }, // TTL index
     },
     hourlyResetTime: {
       type: Date,
       required: true,
-      index: { expireAfterSeconds: 0 }, // TTL index
     },
   },
   {

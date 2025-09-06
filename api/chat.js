@@ -96,12 +96,12 @@ router.post('/chat/init', async (req, res) => {
 
     // Initialize rate limit tracking
     const rateLimitStart = Date.now();
-    const rateLimitResult = await rateLimiter.checkRateLimit(sessionId, userInfo.ip, token, userInfo);
+    const rateLimitResult = await rateLimiter.checkRateLimit(sessionId, userInfo.ip);
     console.log(`⏱️ [INIT] Rate limit check: ${Date.now() - rateLimitStart}ms`);
 
     // Get rate limit headers
     const headerStart = Date.now();
-    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, token, userInfo);
+    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip);
     Object.entries(rateLimitHeaders).forEach(([key, value]) => {
       res.setHeader(key, value);
     });
@@ -171,10 +171,10 @@ router.post('/chat', async (req, res) => {
 
     const currentSessionId = sessionId;
 
-    // Check rate limits
+    // Check rate limits (this also increments the counter)
     const rateLimitStart = Date.now();
-    const rateLimitResult = await rateLimiter.checkRateLimit(currentSessionId, userInfo.ip, userToken, userInfo);
-    console.log(`⏱️ [CHAT] Rate limit check: ${Date.now() - rateLimitStart}ms`);
+    const rateLimitResult = await rateLimiter.checkRateLimit(currentSessionId, userInfo.ip);
+    console.log(`⏱️ [CHAT] Rate limit check & increment: ${Date.now() - rateLimitStart}ms`);
 
     if (!rateLimitResult.allowed) {
       const limitType = rateLimitResult.reason === 'daily_limit' ? 'daily' : 'hourly';
@@ -194,30 +194,55 @@ router.post('/chat', async (req, res) => {
       });
     }
 
-    // Increment rate limit counters
-    const incrementStart = Date.now();
-    const counts = await rateLimiter.incrementCount(currentSessionId, userInfo.ip, userToken, userInfo);
-    console.log(`⏱️ [CHAT] Rate limit increment: ${Date.now() - incrementStart}ms`);
+    const counts = { dailyCount: rateLimitResult.dailyCount, hourlyCount: rateLimitResult.hourlyCount };
 
-    // Find user by token if provided - wait for database connection
+    // Parallelize database operations
     let user = null;
+    let conversationHistory = [];
+
     if (userToken) {
       try {
         const dbWaitStart = Date.now();
         await database.waitForConnection();
         console.log(`⏱️ [CHAT] Database wait: ${Date.now() - dbWaitStart}ms`);
 
-        const userFindStart = Date.now();
-        user = await User.findByToken(userToken);
-        console.log(`⏱️ [CHAT] User find: ${Date.now() - userFindStart}ms`);
+        const parallelStart = Date.now();
 
+        // Run user operations in parallel
+        const userPromise = User.findByToken(userToken);
+
+        // Start both operations
+        const [foundUser] = await Promise.all([userPromise]);
+        user = foundUser;
+
+        console.log(`⏱️ [CHAT] Parallel user operations: ${Date.now() - parallelStart}ms`);
+
+        // Get conversation history and update session in parallel (if user exists)
         if (user) {
-          const sessionUpdateStart = Date.now();
-          await user.updateSessionActivity(currentSessionId);
-          console.log(`⏱️ [CHAT] Session update: ${Date.now() - sessionUpdateStart}ms`);
+          const parallelUserStart = Date.now();
+          const Chat = require('../models/Chat');
+
+          const [historyChats] = await Promise.all([
+            Chat.getConversationHistory(user._id, currentSessionId, 10),
+            user.updateSessionActivity(currentSessionId),
+          ]);
+
+          console.log(`⏱️ [CHAT] Parallel user data operations: ${Date.now() - parallelUserStart}ms`);
+
+          // Convert chat history to OpenAI message format
+          const convertStart = Date.now();
+          conversationHistory = historyChats
+            .map(chat => [
+              { role: 'user', content: chat.userMessage },
+              { role: 'assistant', content: chat.assistantMessage },
+            ])
+            .flat();
+          console.log(`⏱️ [CHAT] History conversion: ${Date.now() - convertStart}ms`);
+
+          console.log(`📚 Loaded ${conversationHistory.length} messages from conversation history`);
         }
       } catch (userError) {
-        console.error('Error updating user session:', userError);
+        console.error('Error with user operations:', userError);
         return res.status(503).json({
           error: 'Database service temporarily unavailable. Please try again in a moment.',
         });
@@ -237,34 +262,6 @@ router.post('/chat', async (req, res) => {
         email: user.email,
         notes: user.notes,
       };
-    }
-
-    // Get conversation history for context - database connection is already ensured
-    let conversationHistory = [];
-    if (user?._id) {
-      try {
-        const historyStart = Date.now();
-        const Chat = require('../models/Chat');
-        const historyChats = await Chat.getConversationHistory(user._id, currentSessionId, 10);
-        console.log(`⏱️ [CHAT] Conversation history fetch: ${Date.now() - historyStart}ms`);
-
-        // Convert chat history to OpenAI message format
-        const convertStart = Date.now();
-        conversationHistory = historyChats
-          .map(chat => [
-            { role: 'user', content: chat.userMessage },
-            { role: 'assistant', content: chat.assistantMessage },
-          ])
-          .flat();
-        console.log(`⏱️ [CHAT] History conversion: ${Date.now() - convertStart}ms`);
-
-        console.log(`📚 Loaded ${conversationHistory.length} messages from conversation history`);
-      } catch (historyError) {
-        console.error('❌ Error loading conversation history:', historyError);
-        return res.status(503).json({
-          error: 'Database service temporarily unavailable. Please try again in a moment.',
-        });
-      }
     }
 
     // Get AI response with conversation history
@@ -292,47 +289,55 @@ router.post('/chat', async (req, res) => {
       output => output.recorded === 'ok' && output.userId && !output.validationError
     );
 
-    // If user details were updated, fetch the latest user info - database connection is already ensured
-    if (userDetailsUpdated && user?._id) {
-      try {
-        const userUpdateStart = Date.now();
-        const updatedUser = await User.findById(user._id);
-        console.log(`⏱️ [CHAT] User info update fetch: ${Date.now() - userUpdateStart}ms`);
+    // Parallelize final operations
+    const finalOpsStart = Date.now();
 
-        if (updatedUser) {
-          updatedUserInfo = {
-            name: updatedUser.name || null,
-            email: updatedUser.email || null,
-          };
-          console.log(`🔄 Updated user info in response:`, updatedUserInfo);
-        }
-      } catch (updateError) {
-        console.error('❌ Error fetching updated user info:', updateError);
-        return res.status(503).json({
-          error: 'Database service temporarily unavailable. Please try again in a moment.',
-        });
-      }
+    const promises = [
+      // Always log the chat session
+      logChatSession({
+        sessionId: currentSessionId,
+        userId: user?._id,
+        userMessage: message,
+        assistantMessage: response.content,
+        toolOutputs,
+        messageCount: counts.dailyCount,
+      }),
+
+      // Always get rate limit headers
+      rateLimiter.getRateLimitHeaders(currentSessionId, userInfo.ip),
+    ];
+
+    // Add user update promise if needed
+    if (userDetailsUpdated && user?._id) {
+      promises.push(User.findById(user._id));
     }
 
-    // Log the chat session
-    const logStart = Date.now();
-    await logChatSession({
-      sessionId: currentSessionId,
-      userId: user?._id,
-      userMessage: message,
-      assistantMessage: response.content,
-      toolOutputs,
-      messageCount: counts.dailyCount,
-    });
-    console.log(`⏱️ [CHAT] Chat session logging: ${Date.now() - logStart}ms`);
+    try {
+      const results = await Promise.all(promises);
 
-    // Set rate limit headers
-    const headerStart = Date.now();
-    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(currentSessionId, userInfo.ip, userToken, userInfo);
-    Object.entries(rateLimitHeaders).forEach(([key, value]) => {
-      res.setHeader(key, value);
-    });
-    console.log(`⏱️ [CHAT] Rate limit headers: ${Date.now() - headerStart}ms`);
+      // Extract results
+      const rateLimitHeaders = results[1];
+      const updatedUser = userDetailsUpdated && user?._id ? results[2] : null;
+
+      console.log(`⏱️ [CHAT] Parallel final operations: ${Date.now() - finalOpsStart}ms`);
+
+      // Update user info if user was updated
+      if (updatedUser) {
+        updatedUserInfo = {
+          name: updatedUser.name || null,
+          email: updatedUser.email || null,
+        };
+        console.log(`🔄 Updated user info in response:`, updatedUserInfo);
+      }
+
+      // Set rate limit headers
+      Object.entries(rateLimitHeaders).forEach(([key, value]) => {
+        res.setHeader(key, value);
+      });
+    } catch (finalError) {
+      console.error('❌ Error in final operations:', finalError);
+      // Continue with response even if final operations fail
+    }
 
     // Send response with updated user info
     const totalTime = Date.now() - startTime;
@@ -384,8 +389,8 @@ router.get('/chat/status', async (req, res) => {
       });
     }
 
-    const counts = await rateLimiter.getCounts(sessionId, userInfo.ip, null, userInfo);
-    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip, null, userInfo);
+    const counts = await rateLimiter.getCounts(sessionId, userInfo.ip);
+    const rateLimitHeaders = await rateLimiter.getRateLimitHeaders(sessionId, userInfo.ip);
 
     // Set rate limit headers
     Object.entries(rateLimitHeaders).forEach(([key, value]) => {
