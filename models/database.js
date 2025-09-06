@@ -9,21 +9,23 @@ class Database {
 
   async connect() {
     try {
-      // Connection options for production
+      // Connection options optimized for serverless environments
       const options = {
-        // Connection management
-        maxPoolSize: 100, // Maximum number of connections
-        minPoolSize: 10, // Minimum number of connections
-        maxIdleTimeMS: 30000, // Close connections after 30 seconds of inactivity
+        // Connection management - optimized for serverless
+        maxPoolSize: 10, // Reduced for serverless
+        minPoolSize: 1, // Minimal for serverless
+        maxIdleTimeMS: 10000, // Close connections quickly in serverless
         serverSelectionTimeoutMS: 5000, // How long to try selecting a server
-        socketTimeoutMS: 45000, // How long to wait for a response
+        socketTimeoutMS: 30000, // Reduced timeout for serverless
+        connectTimeoutMS: 10000, // Connection timeout
 
         // Resilience options
         retryWrites: true,
         retryReads: true,
 
-        // For development/debugging
+        // For serverless environments
         bufferCommands: false, // Disable mongoose buffering
+        bufferMaxEntries: 0, // Disable mongoose buffering
       };
 
       const mongoUri = process.env.MONGODB_URI;
