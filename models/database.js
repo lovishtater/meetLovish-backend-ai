@@ -121,6 +121,46 @@ class Database {
     return this.isConnected && mongoose.connection.readyState === 1;
   }
 
+  async waitForConnection(timeoutMs = 30000) {
+    return new Promise((resolve, reject) => {
+      // If already connected, resolve immediately
+      if (this.isConnectionReady()) {
+        resolve(true);
+        return;
+      }
+
+      const timeout = setTimeout(() => {
+        reject(new Error(`Database connection timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      // Set up event listeners to detect when connection is ready
+      const checkConnection = () => {
+        if (this.isConnectionReady()) {
+          clearTimeout(timeout);
+          resolve(true);
+        }
+      };
+
+      // Listen for connection events
+      mongoose.connection.once('connected', checkConnection);
+      mongoose.connection.once('open', checkConnection);
+
+      // If connection fails, reject
+      mongoose.connection.once('error', error => {
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      // If we're not already trying to connect, start the connection
+      if (mongoose.connection.readyState === 0) {
+        this.connect().catch(error => {
+          clearTimeout(timeout);
+          reject(error);
+        });
+      }
+    });
+  }
+
   getConnectionStatus() {
     const states = {
       0: 'disconnected',

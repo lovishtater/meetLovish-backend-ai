@@ -54,26 +54,31 @@ router.post('/chat/init', async (req, res) => {
     const { token } = req.body;
     const userInfo = getUserInfo(req);
 
-    // Find or create user by token
+    // Find or create user by token - wait for database connection
     let user = null;
-    if (database.isConnectionReady()) {
-      try {
-        const userResult = await User.findOrCreateByToken(token, userInfo);
-        user = userResult.user;
-      } catch (dbError) {
-        console.error('Database error during user creation:', dbError);
-      }
+    try {
+      await database.waitForConnection();
+      const userResult = await User.findOrCreateByToken(token, userInfo);
+      user = userResult.user;
+    } catch (dbError) {
+      console.error('Database error during user creation:', dbError);
+      return res.status(503).json({
+        error: 'Database service temporarily unavailable. Please try again in a moment.',
+      });
     }
 
     // Generate new session ID
     const sessionId = rateLimiter.generateSessionId(userInfo.ip, userInfo.userAgent);
 
-    // Add session to user if database is available
-    if (user && database.isConnectionReady()) {
+    // Add session to user - database connection is already ensured
+    if (user) {
       try {
         await user.addSession(sessionId);
       } catch (sessionError) {
         console.error('Error adding session to user:', sessionError);
+        return res.status(503).json({
+          error: 'Database service temporarily unavailable. Please try again in a moment.',
+        });
       }
     }
 
@@ -166,16 +171,20 @@ router.post('/chat', async (req, res) => {
     // Increment rate limit counters
     const counts = await rateLimiter.incrementCount(currentSessionId, userInfo.ip, userToken, userInfo);
 
-    // Find user by token if provided
+    // Find user by token if provided - wait for database connection
     let user = null;
-    if (userToken && database.isConnectionReady()) {
+    if (userToken) {
       try {
+        await database.waitForConnection();
         user = await User.findByToken(userToken);
         if (user) {
           await user.updateSessionActivity(currentSessionId);
         }
       } catch (userError) {
         console.error('Error updating user session:', userError);
+        return res.status(503).json({
+          error: 'Database service temporarily unavailable. Please try again in a moment.',
+        });
       }
     }
 
@@ -194,9 +203,9 @@ router.post('/chat', async (req, res) => {
       };
     }
 
-    // Get conversation history for context
+    // Get conversation history for context - database connection is already ensured
     let conversationHistory = [];
-    if (user?._id && database.isConnectionReady()) {
+    if (user?._id) {
       try {
         const Chat = require('../models/Chat');
         const historyChats = await Chat.getConversationHistory(user._id, currentSessionId, 10);
@@ -212,7 +221,9 @@ router.post('/chat', async (req, res) => {
         console.log(`📚 Loaded ${conversationHistory.length} messages from conversation history`);
       } catch (historyError) {
         console.error('❌ Error loading conversation history:', historyError);
-        // Continue without history if there's an error
+        return res.status(503).json({
+          error: 'Database service temporarily unavailable. Please try again in a moment.',
+        });
       }
     }
 
@@ -239,8 +250,8 @@ router.post('/chat', async (req, res) => {
       output => output.recorded === 'ok' && output.userId && !output.validationError
     );
 
-    // If user details were updated, fetch the latest user info
-    if (userDetailsUpdated && user?._id && database.isConnectionReady()) {
+    // If user details were updated, fetch the latest user info - database connection is already ensured
+    if (userDetailsUpdated && user?._id) {
       try {
         const updatedUser = await User.findById(user._id);
         if (updatedUser) {
@@ -252,6 +263,9 @@ router.post('/chat', async (req, res) => {
         }
       } catch (updateError) {
         console.error('❌ Error fetching updated user info:', updateError);
+        return res.status(503).json({
+          error: 'Database service temporarily unavailable. Please try again in a moment.',
+        });
       }
     }
 
