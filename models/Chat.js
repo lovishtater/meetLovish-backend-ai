@@ -66,7 +66,6 @@ const ChatSchema = new mongoose.Schema(
 ChatSchema.index({ timestamp: -1 }); // Most recent first
 ChatSchema.index({ sessionId: 1, timestamp: -1 }); // Session history
 ChatSchema.index({ userId: 1, timestamp: -1 }); // User-based queries
-ChatSchema.index({ createdAt: 1 }, { expireAfterSeconds: 2592000 }); // Auto-delete after 30 days
 
 // Static methods
 ChatSchema.statics.getRecentChats = function (limit = 50) {

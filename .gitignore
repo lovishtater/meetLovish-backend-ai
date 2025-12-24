@@ -16,9 +16,11 @@ yarn-error.log*
 Thumbs.db
 
 # IDEs
-.vscode/
 .idea/
 
 # Build
 dist/
 build/
+temp_auto_push.bat
+temp_interactive_push.bat
+.gitignore
