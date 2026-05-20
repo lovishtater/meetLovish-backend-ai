@@ -217,7 +217,7 @@ router.post('/chat', async (req, res) => {
           const Chat = require('../models/Chat');
 
           const [historyChats] = await Promise.all([
-            Chat.getConversationHistory(user._id, currentSessionId, 10),
+            Chat.getConversationHistory(user._id, currentSessionId, 5),
             user.updateSessionActivity(currentSessionId),
           ]);
 
