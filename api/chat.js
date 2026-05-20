@@ -364,6 +364,127 @@ router.post('/chat', async (req, res) => {
   }
 });
 
+// POST /api/chat/stream - Streaming chat endpoint (Server-Sent Events)
+router.post('/chat/stream', async (req, res) => {
+  const startTime = Date.now();
+
+  // SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendEvent = data => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+  try {
+    const { message, sessionId, userToken } = req.body;
+
+    if (!message || typeof message !== 'string' || message.trim().length === 0) {
+      sendEvent({ type: 'error', message: 'Message is required' });
+      return res.end();
+    }
+
+    if (message.length > 1000) {
+      sendEvent({ type: 'error', message: 'Message too long. Maximum 1000 characters.' });
+      return res.end();
+    }
+
+    if (!sessionId) {
+      sendEvent({ type: 'error', message: 'Session ID is required' });
+      return res.end();
+    }
+
+    const userInfo = getUserInfo(req);
+
+    const rateLimitResult = await rateLimiter.checkRateLimit(sessionId, userInfo.ip);
+    if (!rateLimitResult.allowed) {
+      const minutes = Math.floor((rateLimitResult.dailyResetTime - Date.now()) / 60000);
+      sendEvent({ type: 'error', message: `Daily limit reached. Try again in ${minutes} minutes.` });
+      return res.end();
+    }
+
+    let user = null;
+    let conversationHistory = [];
+
+    if (userToken) {
+      try {
+        await database.waitForConnection();
+        user = await User.findByToken(userToken);
+
+        if (user) {
+          const Chat = require('../models/Chat');
+          const [historyChats] = await Promise.all([
+            Chat.getConversationHistory(user._id, sessionId, 10),
+            user.updateSessionActivity(sessionId),
+          ]);
+          conversationHistory = historyChats
+            .map(chat => [
+              { role: 'user', content: chat.userMessage },
+              { role: 'assistant', content: chat.assistantMessage },
+            ])
+            .flat();
+        }
+      } catch (err) {
+        console.error('DB error in stream endpoint:', err);
+      }
+    }
+
+    const userContext = user ? { name: user.name, email: user.email, notes: user.notes } : null;
+
+    const response = await getAIAssistant().chatStream(
+      message,
+      conversationHistory,
+      sessionId,
+      userInfo,
+      user?._id,
+      userContext,
+      chunk => sendEvent(chunk)
+    );
+
+    // Log chat and get updated user in parallel
+    const toolOutputs = response.messages.filter(msg => msg.role === 'tool').map(msg => JSON.parse(msg.content));
+    const { logChatSession } = require('../utils/logger');
+
+    const userDetailsUpdated = toolOutputs.some(o => o.recorded === 'ok' && o.userId && !o.validationError);
+    const promises = [
+      logChatSession({
+        sessionId,
+        userId: user?._id,
+        userMessage: message,
+        assistantMessage: response.content,
+        toolOutputs,
+        messageCount: rateLimitResult.dailyCount,
+      }),
+    ];
+    if (userDetailsUpdated && user?._id) {
+      promises.push(User.findById(user._id));
+    }
+
+    const results = await Promise.all(promises);
+    const updatedUser = userDetailsUpdated && user?._id ? results[1] : null;
+
+    sendEvent({
+      type: 'done',
+      userInfo: {
+        name: updatedUser?.name || user?.name || null,
+        email: updatedUser?.email || user?.email || null,
+      },
+      rateLimits: {
+        dailyCount: rateLimitResult.dailyCount,
+        dailyLimit: rateLimiter.MAX_MESSAGES_PER_DAY,
+        dailyRemaining: Math.max(0, rateLimiter.MAX_MESSAGES_PER_DAY - rateLimitResult.dailyCount),
+      },
+    });
+
+    console.log(`🏁 [STREAM] Total: ${Date.now() - startTime}ms`);
+  } catch (error) {
+    console.error('Stream endpoint error:', error);
+    sendEvent({ type: 'error', message: 'Something went wrong. Please try again.' });
+  }
+
+  res.end();
+});
+
 // GET /api/chat/status - Get session status and rate limits
 router.get('/chat/status', async (req, res) => {
   try {
