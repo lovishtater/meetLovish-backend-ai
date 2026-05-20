@@ -97,13 +97,13 @@ class Database {
     process.on('SIGINT', async () => {
       console.log('🛑 Shutting down MongoDB connection...');
       await this.disconnect();
-      throw new Error('Process terminated (SIGINT) after MongoDB disconnect.');
+      process.exit(0);
     });
 
     process.on('SIGTERM', async () => {
       console.log('🛑 Shutting down MongoDB connection...');
       await this.disconnect();
-      throw new Error('Process terminated (SIGTERM) after MongoDB disconnect.');
+      process.exit(0);
     });
   }
 
@@ -120,52 +120,49 @@ class Database {
     return this.isConnected && mongoose.connection.readyState === 1;
   }
 
-  async waitForConnection(timeoutMs = 30000) {
+  async waitForConnection(timeoutMs = 10000) {
+    if (mongoose.connection.readyState === 1) {
+      return true;
+    }
+
     return new Promise((resolve, reject) => {
-      // Check if already connected - use mongoose's readyState directly
-      if (mongoose.connection.readyState === 1) {
-        resolve(true);
-        return;
-      }
+      let settled = false;
 
-      const timeout = setTimeout(() => {
-        reject(new Error(`Database connection timeout after ${timeoutMs}ms`));
-      }, timeoutMs);
-
-      // Set up event listeners to detect when connection is ready
-      const checkConnection = () => {
-        if (mongoose.connection.readyState === 1) {
-          clearTimeout(timeout);
-          resolve(true);
-        }
+      const done = (err) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        mongoose.connection.removeListener('connected', onReady);
+        mongoose.connection.removeListener('open', onReady);
+        mongoose.connection.removeListener('reconnected', onReady);
+        mongoose.connection.removeListener('error', onError);
+        if (err) reject(err);
+        else resolve(true);
       };
 
-      // Listen for connection events
-      mongoose.connection.once('connected', checkConnection);
-      mongoose.connection.once('open', checkConnection);
+      const onReady = () => done(null);
+      const onError = (err) => done(err);
 
-      // If connection fails, reject
-      mongoose.connection.once('error', error => {
-        clearTimeout(timeout);
-        reject(error);
-      });
+      const timeout = setTimeout(() => {
+        done(new Error(`Database connection timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
 
-      // Check current state and act accordingly
-      const readyState = mongoose.connection.readyState;
-      if (readyState === 1) {
-        // Already connected (double check)
-        clearTimeout(timeout);
-        resolve(true);
-      } else if (readyState === 2) {
-        // Connecting - just wait for the events
+      mongoose.connection.once('connected', onReady);
+      mongoose.connection.once('open', onReady);
+      mongoose.connection.once('reconnected', onReady);
+      mongoose.connection.once('error', onError);
+
+      // Re-check after attaching listeners to close the race window
+      if (mongoose.connection.readyState === 1) {
+        done(null);
         return;
-      } else {
-        // Disconnected or other state - start connection
-        this.connect().catch(error => {
-          clearTimeout(timeout);
-          reject(error);
-        });
       }
+
+      if (mongoose.connection.readyState !== 2) {
+        // Not connecting — kick it off
+        this.connect().catch(onError);
+      }
+      // If readyState === 2 (connecting), just wait for the events above
     });
   }
 
