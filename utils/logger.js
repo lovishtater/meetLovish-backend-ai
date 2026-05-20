@@ -73,11 +73,7 @@ async function logToolCall(toolData, sessionId, userInfo, result = {}, userId = 
 // Get recent chat sessions from MongoDB
 async function getRecentChats(limit = 50) {
   try {
-    if (!database.isConnectionReady()) {
-      console.warn('⚠️ Database not ready, returning empty chats');
-      return [];
-    }
-
+    await database.waitForConnection();
     return await Chat.getRecentChats(limit);
   } catch (error) {
     console.error('❌ Error fetching recent chats:', error);
@@ -88,11 +84,7 @@ async function getRecentChats(limit = 50) {
 // Get recent tool calls from MongoDB
 async function getRecentToolCalls(limit = 50) {
   try {
-    if (!database.isConnectionReady()) {
-      console.warn('⚠️ Database not ready, returning empty tool calls');
-      return [];
-    }
-
+    await database.waitForConnection();
     return await ToolCall.getRecentToolCalls(limit);
   } catch (error) {
     console.error('❌ Error fetching recent tool calls:', error);
@@ -103,14 +95,7 @@ async function getRecentToolCalls(limit = 50) {
 // Get analytics data from MongoDB
 async function getAnalytics() {
   try {
-    if (!database.isConnectionReady()) {
-      console.warn('⚠️ Database not ready, returning empty analytics');
-      return {
-        chats: { total: 0, today: 0, thisWeek: 0 },
-        tools: { userDetailsRecorded: 0, unknownQuestions: 0, total: 0 },
-        users: { uniqueIPs: 0, total: 0 },
-      };
-    }
+    await database.waitForConnection();
 
     // Get analytics from all models
     const [chatAnalytics, toolAnalytics, userStats] = await Promise.all([

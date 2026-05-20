@@ -86,9 +86,7 @@ router.get('/analytics', requireSecret, async (req, res) => {
 router.get('/users', requireSecret, async (req, res) => {
   console.log('Admin users endpoint called');
   try {
-    if (!database.isConnectionReady()) {
-      return res.status(503).json({ error: 'Database not available' });
-    }
+    await database.waitForConnection();
 
     const limit = parseInt(req.query.limit) || 50;
     const maxLimit = 200;
@@ -309,9 +307,7 @@ router.get('/sessions/:sessionId', requireSecret, async (req, res) => {
   try {
     const { sessionId } = req.params;
 
-    if (!database.isConnectionReady()) {
-      return res.status(503).json({ error: 'Database not available' });
-    }
+    await database.waitForConnection();
 
     const chats = await Chat.getChatsBySession(sessionId);
     const tools = await ToolCall.getToolCallsBySession(sessionId);
@@ -352,9 +348,7 @@ router.get('/search', requireSecret, async (req, res) => {
       return res.status(400).json({ error: 'Search query must be at least 2 characters' });
     }
 
-    if (!database.isConnectionReady()) {
-      return res.status(503).json({ error: 'Database not available' });
-    }
+    await database.waitForConnection();
 
     const searchResults = {};
 
