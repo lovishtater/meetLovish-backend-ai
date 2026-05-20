@@ -107,50 +107,30 @@ app.use((req, res) => {
   });
 });
 
-// Graceful shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    console.log('Process terminated');
-  });
-});
+// Kick off DB connection immediately — runs on cold start before any request arrives.
+// waitForConnection() in each route handler waits for this to complete.
+database.connect().catch(err => console.error('❌ Database connection failed:', err.message));
 
-// Start server
+// Validate environment variables
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('⚠️  Warning: OPENAI_API_KEY not set in environment variables');
+}
+if (!process.env.ADMIN_SECRET || process.env.ADMIN_SECRET === 'your-secret-key-here') {
+  console.warn('⚠️  Warning: ADMIN_SECRET not set or using default. Please set a secure secret.');
+}
+if (!process.env.MONGODB_URI && !process.env.DATABASE_URL) {
+  console.warn('⚠️  Warning: MONGODB_URI/DATABASE_URL not set. Using local MongoDB.');
+}
+
+// Local development only — Vercel handles HTTP itself and ignores this
 const PORT = process.env.PORT || 8008;
-const server = app.listen(PORT, async () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📱 Health check: http://localhost:${PORT}/health`);
-  console.log(`💬 Chat endpoint: http://localhost:${PORT}/api/chat`);
-  console.log(`⚡ Environment: ${process.env.NODE_ENV || 'development'}`);
-
-  // Initialize MongoDB connection
-  try {
-    await database.connect();
-    console.log('✅ All systems ready!');
-  } catch (error) {
-    console.error('❌ Database connection failed:', error.message);
-    console.warn('⚠️  Server will continue without database functionality');
-  }
-
-  // Validate environment variables
-  if (!process.env.OPENAI_API_KEY) {
-    console.warn('⚠️  Warning: OPENAI_API_KEY not set in environment variables');
-  }
-
-  if (!process.env.ADMIN_SECRET || process.env.ADMIN_SECRET === 'your-secret-key-here') {
-    console.warn('⚠️  Warning: ADMIN_SECRET not set or using default. Please set a secure secret.');
-  }
-
-  if (!process.env.MONGODB_URI && !process.env.DATABASE_URL) {
-    console.warn('⚠️  Warning: MONGODB_URI/DATABASE_URL not set. Using local MongoDB.');
-  }
-});
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📱 Health check: http://localhost:${PORT}/health`);
+    console.log(`💬 Chat endpoint: http://localhost:${PORT}/api/chat`);
+  });
+}
 
 module.exports = app;
